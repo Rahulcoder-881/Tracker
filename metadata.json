@@ -1,0 +1,6 @@
+{
+  "name": "Tracker Growth Platform",
+  "description": "Utilitarian execution workspace and momentum tracker for high-agency students and ambitious builders.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

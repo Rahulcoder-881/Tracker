@@ -1,0 +1,110 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User account profile and execution preferences",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "domainFocus": { "type": "string" },
+        "targetDailyHours": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "email"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "Daily execution checkpoint item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "domain": { "type": "string" },
+        "priority": { "type": "string" },
+        "estimatedMinutes": { "type": "number" },
+        "spentMinutes": { "type": "number" },
+        "completed": { "type": "boolean" },
+        "date": { "type": "string" },
+        "userId": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "title", "userId"]
+    },
+    "GrowthGoal": {
+      "title": "GrowthGoal",
+      "description": "Quarterly OKR arc and growth objective",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "quarter": { "type": "string" },
+        "domain": { "type": "string" },
+        "targetVelocity": { "type": "number" },
+        "currentHours": { "type": "number" },
+        "strategicRationale": { "type": "string" },
+        "userId": { "type": "string" }
+      },
+      "required": ["id", "title", "userId"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Multi-turn Gemini chat transcript message",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "role": { "type": "string" },
+        "content": { "type": "string" },
+        "modelUsed": { "type": "string" },
+        "sources": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "userId": { "type": "string" }
+      },
+      "required": ["id", "role", "content", "userId"]
+    },
+    "Habit": {
+      "title": "Habit",
+      "description": "Recurring daily habit tracking, check-ins, and streak counter",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "domain": { "type": "string" },
+        "frequency": { "type": "string" },
+        "streak": { "type": "number" },
+        "bestStreak": { "type": "number" },
+        "completedDates": { "type": "array" },
+        "targetMinutes": { "type": "number" },
+        "userId": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "title"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Stores user profile and execution settings"
+    },
+    "/users/{userId}/tasks/{taskId}": {
+      "schema": "Task",
+      "description": "User daily execution checkpoints"
+    },
+    "/users/{userId}/habits/{habitId}": {
+      "schema": "Habit",
+      "description": "User recurring daily habits and check-in history"
+    },
+    "/users/{userId}/goals/{goalId}": {
+      "schema": "GrowthGoal",
+      "description": "User quarterly growth arcs and OKRs"
+    },
+    "/users/{userId}/chats/{chatId}": {
+      "schema": "ChatMessage",
+      "description": "User multi-turn Gemini conversation threads"
+    }
+  }
+}

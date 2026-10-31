@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 40" width="160" height="40" fill="none">
+  <!-- Tracker Growth Icon Mark -->
+  <g transform="translate(4, 4)">
+    <rect width="32" height="32" rx="9" fill="#111A2C" stroke="#8296FF" stroke-width="1.5" />
+    <path d="M 8 23 L 14 17 L 19 21 L 25 10" stroke="#8296FF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M 21 10 H 25 V 14" stroke="#8296FF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+    <circle cx="25" cy="10" r="2" fill="#35C99A" />
+  </g>
+  <!-- Brand Typography -->
+  <text x="44" y="24" fill="#F4F6FC" font-family="system-ui, -apple-system, 'Inter', sans-serif" font-size="15" font-weight="800" letter-spacing="-0.3">Tracker<tspan fill="#8296FF">Growth</tspan></text>
+</svg>

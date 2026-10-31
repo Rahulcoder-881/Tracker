@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="tg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8296FF" />
+      <stop offset="100%" stop-color="#35C99A" />
+    </linearGradient>
+    <radialGradient id="tg-glow" cx="50%" cy="40%" r="50%">
+      <stop offset="0%" stop-color="#8296FF" stop-opacity="0.3" />
+      <stop offset="100%" stop-color="#0B1020" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+  <!-- Background -->
+  <rect width="512" height="512" rx="112" fill="#0B1020" />
+  <circle cx="256" cy="230" r="180" fill="url(#tg-glow)" />
+  <rect x="28" y="28" width="456" height="456" rx="96" fill="#111A2C" stroke="#8296FF" stroke-opacity="0.4" stroke-width="6" />
+
+  <!-- Growth Dynamic Path -->
+  <g transform="translate(48, 48) scale(0.81)">
+    <!-- Trajectory line -->
+    <path d="M 80 360 L 180 260 L 260 310 L 380 140" fill="none" stroke="url(#tg-grad)" stroke-width="36" stroke-linecap="round" stroke-linejoin="round" />
+    <!-- Arrowhead -->
+    <path d="M 310 140 H 380 V 210" fill="none" stroke="#35C99A" stroke-width="36" stroke-linecap="round" stroke-linejoin="round" />
+    <!-- Focal node -->
+    <circle cx="380" cy="140" r="28" fill="#F4F6FC" stroke="#35C99A" stroke-width="12" />
+    <!-- Milestone nodes -->
+    <circle cx="80" cy="360" r="16" fill="#8296FF" />
+    <circle cx="180" cy="260" r="18" fill="#8296FF" />
+    <circle cx="260" cy="310" r="20" fill="#A78BFA" />
+  </g>
+</svg>
