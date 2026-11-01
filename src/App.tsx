@@ -76,19 +76,7 @@ export default function App() {
         } catch {}
       }
     }
-    // Default seed root admin user
-    return {
-      id: 'usr-admin-dharamveer',
-      email: 'dharamveersharma8809@gmail.com',
-      username: 'dharamveersharma8809',
-      role: 'admin',
-      name: 'Dharamveer Sharma',
-      domainFocus: 'Engineering',
-      bio: 'Platform Root Administrator & Lead Systems Architect with unrestricted governance authority.',
-      avatarUrl: 'https://api.dicebear.com/7.x/identicon/svg?seed=Dharamveer',
-      targetDailyHours: 5.0,
-      createdAt: '2026-10-01T00:00:00.000Z',
-    };
+    return null;
   });
 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -245,23 +233,39 @@ export default function App() {
     }
   }, [currentUser, authToken]);
 
-  // Sync with Firebase Auth state
+  // Restore a server session from Firebase Auth whenever the app loads or auth changes.
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
-      if (fbUser) {
+      if (!fbUser) {
+        setAuthToken(null);
+        setCurrentUser(null);
+        return;
+      }
+
+      try {
         const idToken = await fbUser.getIdToken();
-        setAuthToken(idToken);
+        const response = await fetch('/api/auth/sync-firebase', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({ name: fbUser.displayName, avatarUrl: fbUser.photoURL }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Session restoration failed');
+
+        setAuthToken(data.token);
         setCurrentUser((prev) => ({
-          id: fbUser.uid,
-          email: fbUser.email || prev?.email || '',
-          username: prev?.username || (fbUser.email ? fbUser.email.split('@')[0] : 'user').toLowerCase().replace(/[^a-z0-9_-]/g, ''),
-          name: fbUser.displayName || prev?.name || 'Architect',
-          domainFocus: prev?.domainFocus || 'Engineering',
-          avatarUrl: fbUser.photoURL || prev?.avatarUrl || `https://api.dicebear.com/7.x/identicon/svg?seed=${fbUser.uid}`,
-          targetDailyHours: prev?.targetDailyHours || 4.5,
-          createdAt: prev?.createdAt || new Date().toISOString(),
-          lastLoginAt: new Date().toISOString(),
+          ...data.user,
+          bio: prev?.bio || data.user.bio || '',
+          domainFocus: prev?.domainFocus || data.user.domainFocus || 'Engineering',
+          targetDailyHours: prev?.targetDailyHours || data.user.targetDailyHours || 4.5,
         }));
+      } catch (error) {
+        console.error('Firebase session restoration failed:', error);
+        setAuthToken(null);
+        setCurrentUser(null);
       }
     });
     return () => unsubscribe();
@@ -273,8 +277,9 @@ export default function App() {
       const syncToFirestore = async () => {
         try {
           const userDocRef = doc(db, 'users', currentUser.id);
+          const { role: _role, ...profileData } = currentUser;
           await setDoc(userDocRef, {
-            ...currentUser,
+            ...profileData,
             tasksCount: tasks.length,
             goalsCount: goals.length,
             lastSyncedAt: new Date().toISOString(),
