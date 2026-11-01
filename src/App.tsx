@@ -309,7 +309,7 @@ export default function App() {
 
   useEffect(() => {
     loadMediaAssets();
-  }, []);
+  }, [authToken]);
 
   // Update day statistics when tasks change
   useEffect(() => {
