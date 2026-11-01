@@ -20,6 +20,7 @@ import {
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword,
   updateProfile,
+  sendPasswordResetEmail,
   db, 
   doc, 
   setDoc 
@@ -97,25 +98,21 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         console.warn('Firestore profile sync note:', dbErr);
       }
 
-      // Sync user session to server backend
-      let serverToken = '';
-      try {
-        const syncRes = await fetch('/api/auth/sync-firebase', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(appUser),
-        });
-        if (syncRes.ok) {
-          const syncData = await syncRes.json();
-          serverToken = syncData.token;
-        }
-      } catch (sErr) {
-        console.warn('Backend session sync note:', sErr);
-      }
-
+      // Exchange a verified Firebase ID token for an application session.
       const idToken = await fbUser.getIdToken();
+      const syncRes = await fetch('/api/auth/sync-firebase', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ name: fbUser.displayName, avatarUrl: fbUser.photoURL }),
+      });
+      const syncData = await syncRes.json();
+      if (!syncRes.ok) throw new Error(syncData.error || 'Could not establish an application session.');
+
       sound.playCompletionChime();
-      onAuthSuccess(serverToken || idToken, appUser);
+      onAuthSuccess(syncData.token, syncData.user);
       onClose();
     } catch (err: any) {
       console.error('Google sign-in error:', err);
@@ -135,93 +132,57 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     try {
       if (mode === 'login') {
-        // Log in with verified Gmail ID + Password
-        const res = await fetch('/api/auth/login', {
+        const credential = await signInWithEmailAndPassword(auth, identifier.trim(), password);
+        const fbUser = credential.user;
+        const idToken = await fbUser.getIdToken();
+        const syncRes = await fetch('/api/auth/sync-firebase', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ identifier, password, website_hp: honeypot }),
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+          body: JSON.stringify({ name: fbUser.displayName, avatarUrl: fbUser.photoURL }),
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Login failed');
-
-        // If identifier is a Gmail ID, attempt Firebase sync in background
-        if (identifier.includes('@')) {
-          try {
-            await signInWithEmailAndPassword(auth, identifier, password);
-          } catch {}
-        }
+        const data = await syncRes.json();
+        if (!syncRes.ok) throw new Error(data.error || 'Could not establish an application session.');
 
         sound.playCompletionChime();
         onAuthSuccess(data.token, data.user);
         onClose();
       } else if (mode === 'register') {
-        // Enforce verified Gmail address format
         if (!email.toLowerCase().endsWith('@gmail.com')) {
-          setError('Please use a valid Gmail address (must end with @gmail.com).');
-          setIsLoading(false);
-          return;
+          throw new Error('Please use a valid Gmail address ending in @gmail.com.');
         }
-
-        // Register with verified Gmail ID, Name, Password, and Focus
-        const res = await fetch('/api/auth/register', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            email, 
-            username, 
-            password, 
-            name, 
-            domainFocus,
-            website_hp: honeypot 
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Registration failed');
-
-        // Optionally register in Firebase Auth if available
+        const credential = await createUserWithEmailAndPassword(auth, email.trim(), password);
+        const fbUser = credential.user;
+        await updateProfile(fbUser, { displayName: name });
+        const appUser: User = {
+          id: fbUser.uid,
+          email: fbUser.email || email.trim(),
+          username: username || (fbUser.email ? fbUser.email.split('@')[0] : 'user').toLowerCase().replace(/[^a-z0-9_-]/g, ''),
+          name: fbUser.displayName || name,
+          avatarUrl: fbUser.photoURL || `https://api.dicebear.com/7.x/identicon/svg?seed=${fbUser.uid}`,
+          domainFocus,
+          bio: '',
+          targetDailyHours: 4.5,
+          createdAt: new Date().toISOString(),
+        };
         try {
-          const cred = await createUserWithEmailAndPassword(auth, email, password);
-          if (cred.user) {
-            await updateProfile(cred.user, { displayName: name });
-            await setDoc(doc(db, 'users', cred.user.uid), {
-              ...data.user,
-              id: cred.user.uid,
-              updatedAt: new Date().toISOString(),
-            }, { merge: true });
-          }
-        } catch (fbErr) {
-          // Fallback gracefully
+          await setDoc(doc(db, 'users', fbUser.uid), { ...appUser, updatedAt: new Date().toISOString() }, { merge: true });
+        } catch (dbErr) {
+          console.warn('Firestore profile sync note:', dbErr);
         }
-
+        const idToken = await fbUser.getIdToken();
+        const syncRes = await fetch('/api/auth/sync-firebase', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+          body: JSON.stringify(appUser),
+        });
+        const data = await syncRes.json();
+        if (!syncRes.ok) throw new Error(data.error || 'Could not establish an application session.');
         sound.playCompletionChime();
         onAuthSuccess(data.token, data.user);
         onClose();
       } else if (mode === 'forgot') {
-        const res = await fetch('/api/auth/forgot-password', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ identifier, website_hp: honeypot }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Request failed');
-        if (data.resetToken) {
-          setResetToken(data.resetToken);
-          setSuccessMsg(`Recovery token generated for ${data.accountEmail || identifier}: ${data.resetToken.slice(0, 14)}...`);
-        } else {
-          setSuccessMsg(data.message);
-        }
-      } else if (mode === 'reset') {
-        const res = await fetch('/api/auth/reset-password', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ resetToken, newPassword }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Reset failed');
-        sound.playCompletionChime();
-        setSuccessMsg('Password updated! You can now log in with your new password.');
-        setTimeout(() => setMode('login'), 1500);
-      }
+        await sendPasswordResetEmail(auth, identifier.trim());
+        setSuccessMsg('Password reset instructions have been sent to the registered email address, if an account exists.');
     } catch (err: any) {
       setError(err.message || 'An error occurred during authentication');
     } finally {
