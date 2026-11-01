@@ -874,6 +874,33 @@ app.delete('/api/media/:id', (req, res) => {
   res.json({ message: 'Media asset deleted successfully' });
 });
 
+app.put('/api/media/:id', (req, res) => {
+  const user = getAuthUser(req);
+  if (!user) return res.status(401).json({ error: 'Authentication required' });
+  const asset = mediaAssets.get(req.params.id);
+  if (!asset) return res.status(404).json({ error: 'Media asset not found' });
+  if (asset.userId !== user.id && user.role !== 'admin') {
+    return res.status(403).json({ error: 'You cannot edit another user\\'s media asset' });
+  }
+
+  const { name, originalName, category, tags, mimeType, sizeBytes, dataUrl, notes, width, height } = req.body || {};
+  const updatedAsset: MediaItemRecord = {
+    ...asset,
+    ...(typeof name === 'string' ? { name: name.trim().slice(0, 160) } : {}),
+    ...(typeof originalName === 'string' ? { originalName: originalName.slice(0, 255) } : {}),
+    ...(typeof category === 'string' ? { category: category as MediaItemRecord['category'] } : {}),
+    ...(Array.isArray(tags) ? { tags: tags.filter((tag: unknown): tag is string => typeof tag === 'string').map((tag: string) => tag.toLowerCase().trim()).filter(Boolean).slice(0, 30) } : {}),
+    ...(typeof mimeType === 'string' ? { mimeType: mimeType.slice(0, 100) } : {}),
+    ...(Number.isFinite(Number(sizeBytes)) && sizeBytes !== undefined ? { sizeBytes: Number(sizeBytes) } : {}),
+    ...(typeof dataUrl === 'string' ? { dataUrl } : {}),
+    ...(typeof notes === 'string' ? { notes: notes.slice(0, 2000) } : {}),
+    ...(Number.isFinite(Number(width)) && width !== undefined ? { width: Number(width) } : {}),
+    ...(Number.isFinite(Number(height)) && height !== undefined ? { height: Number(height) } : {}),
+  };
+  mediaAssets.set(req.params.id, updatedAsset);
+  res.json({ message: 'Media asset updated successfully', asset: updatedAsset });
+});
+
 // -------------------------------------------------------------
 // GEMINI MULTI-TURN CHATBOT (Roles, Argon/Flash/Lite, Search Grounding)
 // -------------------------------------------------------------
