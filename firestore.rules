@@ -22,7 +22,16 @@ service cloud.firestore {
 
     // User profile collection
     match /users/{userId} {
-      allow read, write: if isOwner(userId) && isValidId(userId);
+      allow read: if isOwner(userId) && isValidId(userId);
+      allow create: if isOwner(userId)
+        && isValidId(userId)
+        && (!('role' in request.resource.data) || request.resource.data.get('role', 'user') == 'user');
+      // A user may edit their own profile but can never grant themselves admin privileges.
+      allow update: if isOwner(userId)
+        && isValidId(userId)
+        && (!('role' in request.resource.data)
+          || request.resource.data.get('role', null) == resource.data.get('role', null));
+      allow delete: if isOwner(userId) && isValidId(userId);
 
       // Tasks subcollection
       match /tasks/{taskId} {
