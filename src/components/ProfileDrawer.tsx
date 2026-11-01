@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { User, DomainType } from '../types';
 import { sound } from '../utils/audio';
+import { auth, EmailAuthProvider, reauthenticateWithCredential, updatePassword } from '../lib/firebase';
 
 interface ProfileDrawerProps {
   isOpen: boolean;
@@ -96,19 +97,20 @@ export const ProfileDrawer: React.FC<ProfileDrawerProps> = ({
     setPasswordMsg(null);
 
     try {
-      const res = await fetch('/api/auth/change-password', {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ currentPassword, newPassword }),
-      });
+      const fbUser = auth.currentUser;
+      if (!fbUser || !fbUser.email) {
+        throw new Error('Please sign in again before changing your password.');
+      }
+      if (newPassword.length < 8) {
+        throw new Error('New password must contain at least 8 characters.');
+      }
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to change password');
+      const credential = EmailAuthProvider.credential(fbUser.email, currentPassword);
+      await reauthenticateWithCredential(fbUser, credential);
+      await updatePassword(fbUser, newPassword);
+
       sound.playCompletionChime();
-      setPasswordMsg({ type: 'success', text: 'Password successfully updated' });
+      setPasswordMsg({ type: 'success', text: 'Password successfully updated.' });
       setCurrentPassword('');
       setNewPassword('');
     } catch (err: any) {

@@ -364,7 +364,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 </span>
               </div>
               <p className="text-xs text-[var(--text-secondary)] mt-0.5 font-mono">
-                Administrator: <span className="text-[#8296FF] font-semibold">dharamveersharma8809</span> · Full Administrative Oversight
+                Administrator: <span className="text-[#8296FF] font-semibold">{currentUser?.email || "Verified administrator"}</span> · Full Administrative Oversight
               </p>
             </div>
           </div>
@@ -401,6 +401,10 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
             <span className="font-medium">{systemConfig.announcement}</span>
           </div>
         )}
+      </div>
+
+      <div className="p-3 rounded-xl bg-[#F5B85C]/10 border border-[#F5B85C]/25 text-xs text-[var(--text-secondary)]">
+        <strong className="text-[var(--text-primary)]">Firebase account governance:</strong> Create accounts, send password resets, and delete accounts through Firebase Authentication. Admin access is controlled by the Cloud Run <code>ADMIN_EMAILS</code> allowlist. Server-side governance telemetry is currently in-memory and is not durable across Cloud Run restarts or instances.
       </div>
 
       {/* Notifications */}

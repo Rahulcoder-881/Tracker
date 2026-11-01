@@ -7,11 +7,47 @@ import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GoogleGenAI, Modality, GenerateContentResponse } from '@google/genai';
-
 dotenv.config();
+
+const adminEmails = new Set(
+  (process.env.ADMIN_EMAILS || '')
+    .split(',')
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean),
+);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const firebaseWebApiKey = (() => {
+  if (process.env.FIREBASE_WEB_API_KEY) return process.env.FIREBASE_WEB_API_KEY;
+  try {
+    const configPath = path.resolve(__dirname, 'firebase-applet-config.json');
+    return JSON.parse(fs.readFileSync(configPath, 'utf8')).apiKey as string;
+  } catch {
+    return '';
+  }
+})();
+
+async function verifyFirebaseIdToken(idToken: string): Promise<any> {
+  if (!firebaseWebApiKey) throw new Error('FIREBASE_WEB_API_KEY is not configured');
+  const response = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(firebaseWebApiKey)}`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(process.env.APP_URL ? { Referer: process.env.APP_URL } : {}),
+      },
+      body: JSON.stringify({ idToken }),
+    },
+  );
+  if (!response.ok) throw new Error('Firebase rejected the ID token');
+  const payload = await response.json() as { users?: any[] };
+  const account = payload.users?.[0];
+  if (!account?.localId || !account?.email) throw new Error('Firebase token has no verified account identity');
+  return account;
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -222,27 +258,7 @@ function findUserByIdentifier(identifier: string): UserRecord | null {
   return null;
 }
 
-// Seed Root Admin User: dharamveersharma8809 with password Dharam@8809
-const adminSalt = crypto.randomBytes(16).toString('hex');
-const adminHash = hashPassword('Dharam@8809', adminSalt);
-const adminUser: UserRecord = {
-  id: 'usr-admin-dharamveer',
-  email: 'dharamveersharma8809@gmail.com',
-  username: 'dharamveersharma8809',
-  role: 'admin',
-  name: 'Dharamveer Sharma',
-  domainFocus: 'Engineering',
-  bio: 'Platform Root Administrator & Lead Systems Architect with unrestricted governance authority.',
-  avatarUrl: 'https://api.dicebear.com/7.x/identicon/svg?seed=Dharamveer',
-  targetDailyHours: 5.0,
-  salt: adminSalt,
-  passwordHash: adminHash,
-  status: 'active',
-  createdAt: new Date('2026-10-01').toISOString(),
-  lastLoginAt: new Date().toISOString(),
-};
-users.set(adminUser.email.toLowerCase(), adminUser);
-
+// Administrator access is granted only to verified Firebase identities listed in ADMIN_EMAILS.
 // Seed Media Assets
 const seedMedia = [
   {
@@ -302,7 +318,9 @@ function getAuthUser(req: express.Request): UserRecord | null {
     return null;
   }
   for (const user of users.values()) {
-    if (user.id === session.userId) return user;
+    if (user.id === session.userId) {
+      return user.status === 'active' ? user : null;
+    }
   }
   return null;
 }
@@ -311,107 +329,13 @@ function getAuthUser(req: express.Request): UserRecord | null {
 // AUTHENTICATION ROUTES
 // -------------------------------------------------------------
 
-app.post('/api/auth/register', rateLimiter(10, 60000), honeypotCheck, (req, res) => {
-  try {
-    const { email, username, password, name, domainFocus } = req.body;
-    if (!email || !password || !name) {
-      return res.status(400).json({ error: 'Name, Gmail ID, and password are required' });
-    }
-    const normalizedEmail = email.toLowerCase().trim();
-    
-    // Strict Gmail ID requirement (PDF checklist & user prompt: verified user to login using gmail id)
-    const isGmail = /^[a-zA-Z0-9._%+-]+@gmail\.com$/i.test(normalizedEmail);
-    if (!isGmail) {
-      return res.status(400).json({ error: 'Please enter a valid Gmail address ending in @gmail.com' });
-    }
-
-    if (password.length < 8) {
-      return res.status(400).json({ error: 'Password must be at least 8 characters for security.' });
-    }
-
-    const rawUsername = (username || normalizedEmail.split('@')[0] || name.toLowerCase().replace(/\s+/g, '_')).toLowerCase().trim();
-    const normalizedUsername = rawUsername.replace(/[^a-z0-9_-]/g, '') || `user_${Date.now()}`;
-
-    // Verify email and username uniqueness
-    for (const u of users.values()) {
-      if (u.email.toLowerCase() === normalizedEmail) {
-        return res.status(409).json({ error: 'An account with this Gmail ID already exists. Please log in.' });
-      }
-      if (u.username.toLowerCase() === normalizedUsername) {
-        return res.status(409).json({ error: 'This username is already taken. Please choose another username.' });
-      }
-    }
-
-    const salt = crypto.randomBytes(16).toString('hex');
-    const passwordHash = hashPassword(password, salt);
-
-    const isRoot = normalizedUsername === 'dharamveersharma8809' || normalizedEmail === 'dharamveersharma8809@gmail.com';
-    const newUser: UserRecord = {
-      id: `usr-${Date.now()}`,
-      email: normalizedEmail,
-      username: normalizedUsername,
-      role: isRoot ? 'admin' : 'user',
-      name: name.trim(),
-      domainFocus: domainFocus || 'Engineering',
-      bio: '',
-      avatarUrl: `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(normalizedUsername)}`,
-      targetDailyHours: 4.0,
-      salt,
-      passwordHash,
-      status: 'active',
-      createdAt: new Date().toISOString(),
-      lastLoginAt: new Date().toISOString(),
-    };
-
-    users.set(normalizedEmail, newUser);
-
-    const token = generateSecureToken();
-    sessions.set(token, {
-      userId: newUser.id,
-      token,
-      createdAt: new Date().toISOString(),
-      expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
-    });
-
-    logAuditEvent(newUser.username, 'USER_REGISTER', 'Authentication', `New verified Gmail account registered: ${newUser.email}`, 'info');
-
-    res.status(201).json({ message: 'Account registered successfully', token, user: sanitizeUser(newUser) });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to register account' });
-  }
+// Legacy password endpoints are disabled. Firebase Auth is the sole sign-in authority.
+app.post('/api/auth/register', (_req, res) => {
+  res.status(410).json({ error: 'Use Firebase account registration from the application sign-in screen.' });
 });
 
-app.post('/api/auth/login', rateLimiter(15, 60000), honeypotCheck, (req, res) => {
-  try {
-    const { identifier, email, username, password } = req.body;
-    const loginIdentifier = (identifier || email || username || '').trim();
-    if (!loginIdentifier || !password) {
-      return res.status(400).json({ error: 'Gmail ID and password are required' });
-    }
-    const user = findUserByIdentifier(loginIdentifier);
-    if (!user || !verifyPassword(password, user.salt, user.passwordHash)) {
-      return res.status(401).json({ error: 'Invalid Gmail ID or password. Please check your credentials or create a verified account.' });
-    }
-
-    if (user.status === 'suspended') {
-      return res.status(403).json({ error: 'This account has been suspended by the administrator.' });
-    }
-
-    user.lastLoginAt = new Date().toISOString();
-    const token = generateSecureToken();
-    sessions.set(token, {
-      userId: user.id,
-      token,
-      createdAt: new Date().toISOString(),
-      expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
-    });
-
-    logAuditEvent(user.username, 'USER_LOGIN', 'Authentication Gateway', `Successful session token issued for ${user.role} role.`, 'info');
-
-    res.json({ message: 'Login successful', token, user: sanitizeUser(user) });
-  } catch (err) {
-    res.status(500).json({ error: 'Authentication failed' });
-  }
+app.post('/api/auth/login', (_req, res) => {
+  res.status(410).json({ error: 'Password sign-in is handled by Firebase Authentication.' });
 });
 
 // -------------------------------------------------------------
@@ -493,7 +417,7 @@ function requireAdmin(req: express.Request, res: express.Response, next: express
   if (!user) {
     return res.status(401).json({ error: 'Administrative authentication required' });
   }
-  if (user.role !== 'admin' && user.username !== 'dharamveersharma8809' && user.email !== 'dharamveersharma8809@gmail.com') {
+  if (user.role !== 'admin') {
     return res.status(403).json({ error: 'Access denied: Root Administrator privileges required' });
   }
   (req as any).adminUser = user;
@@ -528,51 +452,10 @@ app.get('/api/admin/users', requireAdmin, (_req, res) => {
   res.json({ users: userList });
 });
 
-app.post('/api/admin/users', requireAdmin, (req, res) => {
-  try {
-    const { email, username, password, name, role, domainFocus, targetDailyHours, bio } = req.body;
-    if (!email || !password || !name) {
-      return res.status(400).json({ error: 'Name, email, and password are required' });
-    }
-    const normalizedEmail = email.toLowerCase().trim();
-    const cleanUsername = (username || normalizedEmail.split('@')[0]).toLowerCase().replace(/[^a-z0-9_-]/g, '').trim();
-
-    for (const u of users.values()) {
-      if (u.email.toLowerCase() === normalizedEmail) {
-        return res.status(409).json({ error: 'An account with this email already exists' });
-      }
-      if (u.username.toLowerCase() === cleanUsername) {
-        return res.status(409).json({ error: 'An account with this username already exists' });
-      }
-    }
-
-    const salt = crypto.randomBytes(16).toString('hex');
-    const passwordHash = hashPassword(password, salt);
-
-    const newUser: UserRecord = {
-      id: `usr-${Date.now()}`,
-      email: normalizedEmail,
-      username: cleanUsername,
-      role: role === 'admin' ? 'admin' : 'user',
-      name: name.trim(),
-      domainFocus: domainFocus || 'Engineering',
-      bio: bio || '',
-      avatarUrl: `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(cleanUsername)}`,
-      targetDailyHours: Number(targetDailyHours) || 4.0,
-      salt,
-      passwordHash,
-      status: 'active',
-      createdAt: new Date().toISOString(),
-      lastLoginAt: new Date().toISOString(),
-    };
-
-    users.set(normalizedEmail, newUser);
-    logAuditEvent((req as any).adminUser.username, 'CREATE_USER', `User: ${newUser.username}`, `Created user account with role ${newUser.role}`, 'info');
-
-    res.status(201).json({ message: 'User created successfully', user: sanitizeUser(newUser) });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Failed to create user' });
-  }
+app.post('/api/admin/users', requireAdmin, (_req, res) => {
+  res.status(410).json({
+    error: 'Create accounts through Firebase Authentication. Admin privileges are granted through the Cloud Run ADMIN_EMAILS allowlist.',
+  });
 });
 
 app.put('/api/admin/users/:id', requireAdmin, (req, res) => {
@@ -592,8 +475,10 @@ app.put('/api/admin/users/:id', requireAdmin, (req, res) => {
   }
 
   if (name) targetUser.name = String(name).trim();
-  if (role && (role === 'admin' || role === 'user')) {
-    targetUser.role = role;
+  if (role && role !== targetUser.role) {
+    return res.status(400).json({
+      error: 'Administrator access is controlled only by the Cloud Run ADMIN_EMAILS allowlist.',
+    });
   }
   if (status && (status === 'active' || status === 'suspended')) {
     targetUser.status = status;
@@ -607,59 +492,12 @@ app.put('/api/admin/users/:id', requireAdmin, (req, res) => {
   res.json({ message: 'User updated successfully', user: sanitizeUser(targetUser) });
 });
 
-app.post('/api/admin/users/:id/reset-password', requireAdmin, (req, res) => {
-  const { id } = req.params;
-  const { newPassword } = req.body;
-  if (!newPassword || newPassword.length < 6) {
-    return res.status(400).json({ error: 'Minimum 6 character password required' });
-  }
-
-  let targetUser: UserRecord | null = null;
-  for (const u of users.values()) {
-    if (u.id === id) {
-      targetUser = u;
-      break;
-    }
-  }
-
-  if (!targetUser) {
-    return res.status(404).json({ error: 'User not found' });
-  }
-
-  const newSalt = crypto.randomBytes(16).toString('hex');
-  targetUser.salt = newSalt;
-  targetUser.passwordHash = hashPassword(newPassword, newSalt);
-
-  logAuditEvent((req as any).adminUser.username, 'ADMIN_PASSWORD_RESET', `User: ${targetUser.username}`, 'Direct root administrative password override.', 'warn');
-
-  res.json({ message: `Password for ${targetUser.username} successfully reset.` });
+app.post('/api/admin/users/:id/reset-password', requireAdmin, (_req, res) => {
+  res.status(410).json({ error: 'Password resets must be sent through Firebase Authentication. Use the Firebase password reset flow.' });
 });
 
-app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
-  const { id } = req.params;
-  let targetUser: UserRecord | null = null;
-  let emailKey: string | null = null;
-
-  for (const [key, u] of users.entries()) {
-    if (u.id === id) {
-      targetUser = u;
-      emailKey = key;
-      break;
-    }
-  }
-
-  if (!targetUser || !emailKey) {
-    return res.status(404).json({ error: 'User not found' });
-  }
-
-  if (targetUser.username === 'dharamveersharma8809' || targetUser.email === 'dharamveersharma8809@gmail.com') {
-    return res.status(400).json({ error: 'Root Administrator account cannot be deleted.' });
-  }
-
-  users.delete(emailKey);
-  logAuditEvent((req as any).adminUser.username, 'DELETE_USER', `User: ${targetUser.username}`, 'User account permanently purged from platform.', 'critical');
-
-  res.json({ message: `User ${targetUser.username} deleted successfully.` });
+app.delete('/api/admin/users/:id', requireAdmin, (_req, res) => {
+  res.status(410).json({ error: 'Account deletion must be performed in Firebase Authentication until the Admin SDK is configured.' });
 });
 
 app.get('/api/admin/system', requireAdmin, (_req, res) => {
@@ -691,28 +529,36 @@ app.post('/api/admin/maintenance/clear-cache', requireAdmin, (req, res) => {
   res.json({ message: `Cache and ${beforeCount} active sessions successfully cleared.` });
 });
 
-app.post('/api/auth/sync-firebase', (req, res) => {
+app.post('/api/auth/sync-firebase', rateLimiter(20, 60000), async (req, res) => {
   try {
-    const { id, email, name, avatarUrl, domainFocus } = req.body;
-    if (!id || !email) {
-      return res.status(400).json({ error: 'Missing user credentials for Firebase sync' });
+    const authorization = req.headers.authorization || '';
+    if (!authorization.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Firebase sign-in is required' });
     }
-    const normalizedEmail = email.toLowerCase().trim();
+
+    // Verify the Firebase ID token cryptographically. Never trust uid/email/role from request JSON.
+    const decoded = await verifyFirebaseIdToken(authorization.slice(7));
+    if (!decoded.localId || !decoded.email) {
+      return res.status(401).json({ error: 'A valid Firebase email identity is required' });
+    }
+
+    const normalizedEmail = decoded.email.toLowerCase().trim();
+    const isConfiguredAdmin = decoded.emailVerified === true && adminEmails.has(normalizedEmail);
+    const { name, avatarUrl, domainFocus } = req.body || {};
     let user = users.get(normalizedEmail);
+
     if (!user) {
       const generatedSalt = crypto.randomBytes(16).toString('hex');
       const generatedHash = hashPassword(generateSecureToken(), generatedSalt);
-      const generatedUsername = normalizedEmail.split('@')[0] || `user_${Date.now()}`;
-      const isRoot = generatedUsername === 'dharamveersharma8809' || normalizedEmail === 'dharamveersharma8809@gmail.com';
       user = {
-        id: id || `usr-${Date.now()}`,
+        id: decoded.localId,
         email: normalizedEmail,
-        username: generatedUsername,
-        role: isRoot ? 'admin' : 'user',
-        name: name || 'Google Architect',
+        username: normalizedEmail.split('@')[0].replace(/[^a-z0-9_-]/g, '') || `user_${Date.now()}`,
+        role: isConfiguredAdmin ? 'admin' : 'user',
+        name: String(decoded.displayName || name || 'Tracker User').slice(0, 100),
         domainFocus: domainFocus || 'Engineering',
-        bio: 'Authenticated via Firebase Google Sign-In with real-time cloud persistence.',
-        avatarUrl: avatarUrl || `https://api.dicebear.com/7.x/identicon/svg?seed=${id}`,
+        bio: '',
+        avatarUrl: String(decoded.photoUrl || avatarUrl || '').slice(0, 2048),
         targetDailyHours: 4.5,
         salt: generatedSalt,
         passwordHash: generatedHash,
@@ -722,9 +568,16 @@ app.post('/api/auth/sync-firebase', (req, res) => {
       };
       users.set(normalizedEmail, user);
     } else {
+      // Always take the stable identity and privilege from the verified Firebase token/config.
+      user.id = decoded.localId;
+      user.role = isConfiguredAdmin ? 'admin' : 'user';
       user.lastLoginAt = new Date().toISOString();
-      if (name) user.name = name;
-      if (avatarUrl) user.avatarUrl = avatarUrl;
+      if (decoded.displayName || name) user.name = String(decoded.displayName || name).slice(0, 100);
+      if (decoded.photoUrl || avatarUrl) user.avatarUrl = String(decoded.photoUrl || avatarUrl).slice(0, 2048);
+    }
+
+    if (user.status !== 'active') {
+      return res.status(403).json({ error: 'This account has been suspended. Contact the administrator.' });
     }
 
     const token = generateSecureToken();
@@ -736,63 +589,18 @@ app.post('/api/auth/sync-firebase', (req, res) => {
     });
 
     res.json({ message: 'Firebase user session synced', token, user: sanitizeUser(user) });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to sync Firebase session' });
+  } catch (err: any) {
+    console.warn('Firebase token verification failed:', err?.message || err);
+    res.status(401).json({ error: 'Firebase authentication failed. Please sign in again.' });
   }
 });
 
-app.post('/api/auth/forgot-password', (req, res) => {
-  try {
-    const { identifier, email, username } = req.body;
-    const loginIdentifier = (identifier || email || username || '').trim();
-    if (!loginIdentifier) {
-      return res.status(400).json({ error: 'Gmail ID or username is required' });
-    }
-    const user = findUserByIdentifier(loginIdentifier);
-    if (!user) {
-      return res.json({ message: 'If an account exists with this Gmail ID or username, a recovery token has been issued.' });
-    }
-
-    const resetToken = generateSecureToken();
-    passwordResets.set(resetToken, {
-      email: user.email,
-      token: resetToken,
-      expiresAt: Date.now() + 60 * 60 * 1000,
-    });
-
-    res.json({
-      message: 'Password recovery token generated successfully.',
-      resetToken,
-      accountEmail: user.email,
-      simulatedNotice: `Recovery token generated for ${user.email} (${user.username}).`,
-    });
-  } catch (err) {
-    res.status(500).json({ error: 'Password reset request failed' });
-  }
+app.post('/api/auth/forgot-password', rateLimiter(5, 60000), (_req, res) => {
+  res.status(410).json({ error: 'Password recovery is handled securely by Firebase email reset. Please use the sign-in form.' });
 });
 
-app.post('/api/auth/reset-password', (req, res) => {
-  try {
-    const { resetToken, newPassword } = req.body;
-    if (!resetToken || !newPassword || newPassword.length < 8) {
-      return res.status(400).json({ error: 'Valid token and minimum 8-character password required' });
-    }
-    const record = passwordResets.get(resetToken);
-    if (!record || Date.now() > record.expiresAt) {
-      return res.status(400).json({ error: 'Invalid or expired password reset token' });
-    }
-    const user = users.get(record.email);
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
-    const newSalt = crypto.randomBytes(16).toString('hex');
-    user.salt = newSalt;
-    user.passwordHash = hashPassword(newPassword, newSalt);
-    passwordResets.delete(resetToken);
-
-    res.json({ message: 'Password has been successfully reset. Please log in with your new credentials.' });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to reset password' });
-  }
+app.post('/api/auth/reset-password', (_req, res) => {
+  res.status(410).json({ error: 'Password reset tokens are no longer issued by this server. Use the Firebase password-reset email.' });
 });
 
 app.get('/api/auth/me', (req, res) => {
@@ -844,7 +652,11 @@ app.post('/api/auth/logout', (req, res) => {
 
 app.get('/api/media', (req, res) => {
   const { category, tag, search } = req.query;
-  let items = Array.from(mediaAssets.values());
+  const requester = getAuthUser(req);
+  // Seed assets remain public; uploaded assets are visible only to their owner or an administrator.
+  let items = Array.from(mediaAssets.values()).filter(
+    (asset) => !asset.userId || (requester && (asset.userId === requester.id || requester.role === 'admin')),
+  );
   if (category && category !== 'All') items = items.filter((m) => m.category === category);
   if (tag && typeof tag === 'string') items = items.filter((m) => m.tags.includes(tag.toLowerCase()));
   if (search && typeof search === 'string') {
@@ -855,7 +667,7 @@ app.get('/api/media', (req, res) => {
   res.json({ assets: items });
 });
 
-app.post('/api/media/upload', (req, res) => {
+app.post('/api/media/upload', (req, res, next) => { const user = getAuthUser(req); if (!user) return res.status(401).json({ error: 'Authentication required' }); (req as any).mediaUser = user; next(); }, (req, res) => {
   try {
     const { name, originalName, category, tags, mimeType, sizeBytes, dataUrl, notes, width, height } = req.body;
     if (!name || !dataUrl) return res.status(400).json({ error: 'Name and media data are required' });
@@ -873,6 +685,7 @@ app.post('/api/media/upload', (req, res) => {
       width: width ? Number(width) : undefined,
       height: height ? Number(height) : undefined,
       createdAt: new Date().toISOString(),
+      userId: (req as any).mediaUser.id,
     };
 
     mediaAssets.set(newAsset.id, newAsset);
@@ -883,16 +696,49 @@ app.post('/api/media/upload', (req, res) => {
 });
 
 app.delete('/api/media/:id', (req, res) => {
-  const { id } = req.params;
-  mediaAssets.delete(id);
+  const user = getAuthUser(req);
+  if (!user) return res.status(401).json({ error: 'Authentication required' });
+  const asset = mediaAssets.get(req.params.id);
+  if (!asset) return res.status(404).json({ error: 'Media asset not found' });
+  if (asset.userId !== user.id && user.role !== 'admin') {
+    return res.status(403).json({ error: 'You cannot delete another user\'s media asset' });
+  }
+  mediaAssets.delete(req.params.id);
   res.json({ message: 'Media asset deleted successfully' });
+});
+
+app.put('/api/media/:id', (req, res) => {
+  const user = getAuthUser(req);
+  if (!user) return res.status(401).json({ error: 'Authentication required' });
+  const asset = mediaAssets.get(req.params.id);
+  if (!asset) return res.status(404).json({ error: 'Media asset not found' });
+  if (asset.userId !== user.id && user.role !== 'admin') {
+    return res.status(403).json({ error: 'You cannot edit another user\'s media asset' });
+  }
+
+  const { name, originalName, category, tags, mimeType, sizeBytes, dataUrl, notes, width, height } = req.body || {};
+  const updatedAsset: MediaItemRecord = {
+    ...asset,
+    ...(typeof name === 'string' ? { name: name.trim().slice(0, 160) } : {}),
+    ...(typeof originalName === 'string' ? { originalName: originalName.slice(0, 255) } : {}),
+    ...(typeof category === 'string' ? { category: category as MediaItemRecord['category'] } : {}),
+    ...(Array.isArray(tags) ? { tags: tags.filter((tag: unknown): tag is string => typeof tag === 'string').map((tag: string) => tag.toLowerCase().trim()).filter(Boolean).slice(0, 30) } : {}),
+    ...(typeof mimeType === 'string' ? { mimeType: mimeType.slice(0, 100) } : {}),
+    ...(Number.isFinite(Number(sizeBytes)) && sizeBytes !== undefined ? { sizeBytes: Number(sizeBytes) } : {}),
+    ...(typeof dataUrl === 'string' ? { dataUrl } : {}),
+    ...(typeof notes === 'string' ? { notes: notes.slice(0, 2000) } : {}),
+    ...(Number.isFinite(Number(width)) && width !== undefined ? { width: Number(width) } : {}),
+    ...(Number.isFinite(Number(height)) && height !== undefined ? { height: Number(height) } : {}),
+  };
+  mediaAssets.set(req.params.id, updatedAsset);
+  res.json({ message: 'Media asset updated successfully', asset: updatedAsset });
 });
 
 // -------------------------------------------------------------
 // GEMINI MULTI-TURN CHATBOT (Roles, Argon/Flash/Lite, Search Grounding)
 // -------------------------------------------------------------
 
-app.post('/api/ai/chat', async (req, res) => {
+app.post('/api/ai/chat', rateLimiter(20, 60000), async (req, res) => {
   try {
     const { messages, systemRole, model, searchGrounding } = req.body;
 
@@ -1069,7 +915,7 @@ wss.on('connection', async (clientWs: WebSocket) => {
 });
 
 // Existing breakdown & insight routes
-app.post('/api/ai/breakdown', async (req, res) => {
+app.post('/api/ai/breakdown', rateLimiter(30, 60000), async (req, res) => {
   try {
     const { taskTitle, taskDomain, estimatedMinutes } = req.body;
     if (!taskTitle) return res.status(400).json({ error: 'Task title is required' });
@@ -1109,7 +955,7 @@ app.post('/api/ai/breakdown', async (req, res) => {
   }
 });
 
-app.post('/api/ai/insights', async (req, res) => {
+app.post('/api/ai/insights', rateLimiter(30, 60000), async (req, res) => {
   try {
     const { streak, completedCount, totalCount, focusMinutes, domainStats } = req.body;
     if (aiClient) {

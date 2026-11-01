@@ -1,0 +1,31 @@
+name: Verify application
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches:
+      - main
+      - security-fixes/**
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Install dependencies from the committed lockfile
+        run: bun install --frozen-lockfile
+      - name: Type-check
+        run: bun run lint
+      - name: Build frontend
+        run: bun run build

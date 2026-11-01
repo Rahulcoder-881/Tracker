@@ -6,6 +6,11 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   updateProfile,
+  sendPasswordResetEmail,
+  sendEmailVerification,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
+  updatePassword,
   signOut as fbSignOut, 
   onAuthStateChanged 
 } from 'firebase/auth';
@@ -40,6 +45,11 @@ export {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   updateProfile,
+  sendPasswordResetEmail,
+  sendEmailVerification,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
+  updatePassword,
   fbSignOut, 
   onAuthStateChanged, 
   doc, 
