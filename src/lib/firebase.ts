@@ -7,6 +7,9 @@ import {
   createUserWithEmailAndPassword,
   updateProfile,
   sendPasswordResetEmail,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
+  updatePassword,
   signOut as fbSignOut, 
   onAuthStateChanged 
 } from 'firebase/auth';
@@ -42,6 +45,9 @@ export {
   createUserWithEmailAndPassword,
   updateProfile,
   sendPasswordResetEmail,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
+  updatePassword,
   fbSignOut, 
   onAuthStateChanged, 
   doc, 
