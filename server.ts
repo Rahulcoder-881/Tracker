@@ -35,7 +35,10 @@ async function verifyFirebaseIdToken(idToken: string): Promise<any> {
     `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(firebaseWebApiKey)}`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(process.env.APP_URL ? { Referer: process.env.APP_URL } : {}),
+      },
       body: JSON.stringify({ idToken }),
     },
   );
