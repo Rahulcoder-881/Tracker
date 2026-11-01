@@ -391,9 +391,11 @@ export default function App() {
   };
 
   const handleUpdateMedia = async (id: string, updates: Partial<MediaAsset>) => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (authToken) headers.Authorization = `Bearer ${authToken}`;
     const res = await fetch(`/api/media/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(updates),
     });
 
