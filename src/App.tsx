@@ -475,6 +475,19 @@ export default function App() {
     }
   };
 
+  const handleReorderTasks = (reorderedSubset: Task[]) => {
+    setTasks((prev) => {
+      const reorderedIds = new Set(reorderedSubset.map((t) => t.id));
+      let idx = 0;
+      return prev.map((t) => {
+        if (reorderedIds.has(t.id)) {
+          return reorderedSubset[idx++];
+        }
+        return t;
+      });
+    });
+  };
+
   const handleAddSubtask = (taskId: string, title: string) => {
     const newSub = {
       id: `sub-${Date.now()}`,
@@ -1032,6 +1045,7 @@ export default function App() {
                 onToggleHabit={handleToggleHabit}
                 onAddHabit={handleAddHabit}
                 onDeleteHabit={handleDeleteHabit}
+                onReorderTasks={handleReorderTasks}
               />
             )}
 

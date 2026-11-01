@@ -166,36 +166,172 @@ function getAllFiles(dir, baseDir = dir) {
   return results;
 }
 
-const manifestXml = `<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="app.trackergrowth.mobile"
-    android:versionCode="100"
-    android:versionName="1.0.0">
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <application
-        android:label="Tracker Growth"
-        android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher_round"
-        android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
-        android:allowBackup="true"
-        android:hardwareAccelerated="true"
-        android:usesCleartextTraffic="true">
-        <activity
-            android:name="app.trackergrowth.mobile.MainActivity"
-            android:exported="true"
-            android:configChanges="orientation|keyboardHidden|screenSize"
-            android:screenOrientation="portrait">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-    </application>
-</manifest>`;
+function createBinaryAxml() {
+  const strings = [
+    'http://schemas.android.com/apk/res/android', // 0
+    'android',                                    // 1
+    'package',                                    // 2
+    'versionCode',                                // 3
+    'versionName',                                // 4
+    'manifest',                                   // 5
+    'application',                                // 6
+    'activity',                                   // 7
+    'intent-filter',                              // 8
+    'action',                                     // 9
+    'category',                                   // 10
+    'name',                                       // 11
+    'label',                                      // 12
+    'exported',                                   // 13
+    'app.trackergrowth.mobile',                   // 14
+    '1.0.0',                                      // 15
+    'Tracker Growth',                             // 16
+    'app.trackergrowth.mobile.MainActivity',       // 17
+    'android.intent.action.MAIN',                 // 18
+    'android.intent.category.LAUNCHER'            // 19
+  ];
+
+  // 1. Build string pool (UTF-16LE)
+  const strOffsets = [];
+  const strDataList = [];
+  let curOffset = 0;
+  for (const s of strings) {
+    strOffsets.push(curOffset);
+    const sBuf = Buffer.from(s, 'utf16le');
+    const entry = Buffer.alloc(2 + sBuf.length + 2);
+    entry.writeUInt16LE(s.length, 0);
+    sBuf.copy(entry, 2);
+    entry.writeUInt16LE(0, 2 + sBuf.length);
+    strDataList.push(entry);
+    curOffset += entry.length;
+  }
+  const strDataBuf = Buffer.concat(strDataList);
+  const padLen = (4 - (strDataBuf.length % 4)) % 4;
+  const totalStrData = Buffer.concat([strDataBuf, Buffer.alloc(padLen, 0)]);
+
+  const strHeaderSize = 28;
+  const strOffsetsSize = strings.length * 4;
+  const strChunkSize = strHeaderSize + strOffsetsSize + totalStrData.length;
+
+  const sp = Buffer.alloc(strHeaderSize + strOffsetsSize);
+  sp.writeUInt16LE(0x0001, 0); // RES_STRING_POOL_TYPE
+  sp.writeUInt16LE(strHeaderSize, 2);
+  sp.writeUInt32LE(strChunkSize, 4);
+  sp.writeUInt32LE(strings.length, 8);
+  sp.writeUInt32LE(0, 12);
+  sp.writeUInt32LE(0, 16);
+  sp.writeUInt32LE(strHeaderSize + strOffsetsSize, 20);
+  sp.writeUInt32LE(0, 24);
+
+  for (let i = 0; i < strOffsets.length; i++) {
+    sp.writeUInt32LE(strOffsets[i], strHeaderSize + i * 4);
+  }
+  const stringPoolChunk = Buffer.concat([sp, totalStrData]);
+
+  // 2. Resource map
+  const resMapChunk = Buffer.alloc(8);
+  resMapChunk.writeUInt16LE(0x0180, 0);
+  resMapChunk.writeUInt16LE(8, 2);
+  resMapChunk.writeUInt32LE(8, 4);
+
+  // Helper for namespace chunk (24 bytes)
+  function makeNsChunk(type, prefixIdx, uriIdx) {
+    const b = Buffer.alloc(24);
+    b.writeUInt16LE(type, 0);
+    b.writeUInt16LE(16, 2);
+    b.writeUInt32LE(24, 4);
+    b.writeUInt32LE(1, 8);
+    b.writeInt32LE(-1, 12);
+    b.writeUInt32LE(prefixIdx, 16);
+    b.writeUInt32LE(uriIdx, 20);
+    return b;
+  }
+
+  // Helper for start element chunk
+  function makeStartElemChunk(nsIdx, nameIdx, attrs) {
+    const attrCount = attrs.length;
+    const chunkSize = 36 + attrCount * 20;
+    const b = Buffer.alloc(chunkSize);
+    b.writeUInt16LE(0x0102, 0);
+    b.writeUInt16LE(16, 2);
+    b.writeUInt32LE(chunkSize, 4);
+    b.writeUInt32LE(1, 8);
+    b.writeInt32LE(-1, 12);
+    b.writeInt32LE(nsIdx, 16);
+    b.writeUInt32LE(nameIdx, 20);
+    b.writeUInt16LE(20, 24);
+    b.writeUInt16LE(20, 26);
+    b.writeUInt16LE(attrCount, 28);
+    b.writeUInt16LE(0, 30);
+    b.writeUInt16LE(0, 32);
+    b.writeUInt16LE(0, 34);
+
+    let off = 36;
+    for (const a of attrs) {
+      b.writeInt32LE(a.ns, off);
+      b.writeUInt32LE(a.name, off + 4);
+      b.writeInt32LE(a.rawVal, off + 8);
+      b.writeUInt32LE((a.type << 24) | 0x08, off + 12);
+      b.writeUInt32LE(a.data, off + 16);
+      off += 20;
+    }
+    return b;
+  }
+
+  // Helper for end element chunk
+  function makeEndElemChunk(nsIdx, nameIdx) {
+    const b = Buffer.alloc(24);
+    b.writeUInt16LE(0x0103, 0);
+    b.writeUInt16LE(16, 2);
+    b.writeUInt32LE(24, 4);
+    b.writeUInt32LE(1, 8);
+    b.writeInt32LE(-1, 12);
+    b.writeInt32LE(nsIdx, 16);
+    b.writeUInt32LE(nameIdx, 20);
+    return b;
+  }
+
+  const chunks = [
+    stringPoolChunk,
+    resMapChunk,
+    makeNsChunk(0x0100, 1, 0), // Start NS
+    makeStartElemChunk(-1, 5, [
+      { ns: -1, name: 2, rawVal: 14, type: 3, data: 14 },
+      { ns: 0, name: 3, rawVal: -1, type: 16, data: 100 },
+      { ns: 0, name: 4, rawVal: 15, type: 3, data: 15 }
+    ]),
+    makeStartElemChunk(0, 6, [
+      { ns: 0, name: 12, rawVal: 16, type: 3, data: 16 }
+    ]),
+    makeStartElemChunk(0, 7, [
+      { ns: 0, name: 11, rawVal: 17, type: 3, data: 17 },
+      { ns: 0, name: 13, rawVal: -1, type: 18, data: 0xFFFFFFFF }
+    ]),
+    makeStartElemChunk(-1, 8, []),
+    makeStartElemChunk(-1, 9, [
+      { ns: 0, name: 11, rawVal: 18, type: 3, data: 18 }
+    ]),
+    makeEndElemChunk(-1, 9),
+    makeStartElemChunk(-1, 10, [
+      { ns: 0, name: 11, rawVal: 19, type: 3, data: 19 }
+    ]),
+    makeEndElemChunk(-1, 10),
+    makeEndElemChunk(-1, 8),
+    makeEndElemChunk(0, 7),
+    makeEndElemChunk(0, 6),
+    makeEndElemChunk(-1, 5),
+    makeNsChunk(0x0101, 1, 0) // End NS
+  ];
+
+  const body = Buffer.concat(chunks);
+  const fileHeader = Buffer.alloc(8);
+  fileHeader.writeUInt16LE(0x0003, 0); // RES_XML_TYPE
+  fileHeader.writeUInt16LE(8, 2);
+  fileHeader.writeUInt32LE(8 + body.length, 4);
+
+  return Buffer.concat([fileHeader, body]);
+}
+
+const binaryAxml = createBinaryAxml();
 
 const manifestMeta = `Manifest-Version: 1.0
 Created-By: Tracker Growth Build Engine
@@ -217,8 +353,8 @@ const icon512 = fs.readFileSync(path.resolve(__dirname, '../public/pwa-512x512.p
 const iconMaskable = fs.readFileSync(path.resolve(__dirname, '../public/pwa-maskable-512x512.png'));
 
 const apkFiles = [
-  // 1. Android core configuration
-  { name: 'AndroidManifest.xml', content: manifestXml },
+  // 1. Android core configuration (Binary AXML encoded)
+  { name: 'AndroidManifest.xml', content: binaryAxml },
   { name: 'classes.dex', content: buildValidDex() },
   { name: 'META-INF/MANIFEST.MF', content: manifestMeta },
   { name: 'META-INF/CERT.SF', content: certSf },

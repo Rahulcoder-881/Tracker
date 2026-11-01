@@ -11,13 +11,14 @@ import {
   Plus,
   Paperclip,
   ExternalLink,
-  Image as ImageIcon
+  Image as ImageIcon,
+  GripVertical
 } from 'lucide-react';
 import { Task, Subtask, MediaAsset } from '../types';
 import { sound } from '../utils/audio';
 import confetti from 'canvas-confetti';
 
-interface TaskCardProps {
+export interface TaskCardProps {
   task: Task;
   onToggleTask: (id: string) => void;
   onToggleSubtask: (taskId: string, subtaskId: string) => void;
@@ -27,6 +28,8 @@ interface TaskCardProps {
   onAddSubtask: (taskId: string, title: string) => void;
   allMedia?: MediaAsset[];
   onOpenAttachmentPicker?: (task: Task) => void;
+  dragHandleProps?: Record<string, any>;
+  isDragging?: boolean;
 }
 
 export const TaskCard: React.FC<TaskCardProps> = ({
@@ -39,6 +42,8 @@ export const TaskCard: React.FC<TaskCardProps> = ({
   onAddSubtask,
   allMedia = [],
   onOpenAttachmentPicker,
+  dragHandleProps,
+  isDragging = false,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const [isDeconstructing, setIsDeconstructing] = useState(false);
@@ -114,13 +119,27 @@ export const TaskCard: React.FC<TaskCardProps> = ({
 
   return (
     <div
-      className={`group rounded-xl border transition-all p-4 ${
-        task.completed
+      className={`group rounded-xl border transition-all p-3.5 sm:p-4 ${
+        isDragging
+          ? 'bg-[var(--card-surface)] border-[#8296FF] shadow-xl shadow-[#8296FF]/20 ring-2 ring-[#8296FF]/50 scale-[1.01]'
+          : task.completed
           ? 'bg-[var(--card-surface)]/60 border-[var(--border-subtle)] opacity-75'
           : 'bg-[var(--card-surface)] border-[var(--border-subtle)] hover:border-[var(--border-medium)] shadow-xs'
       }`}
     >
-      <div className="flex items-start gap-3.5">
+      <div className="flex items-start gap-2.5 sm:gap-3.5">
+        {/* Grip Handle for Drag-and-Drop Reordering */}
+        {dragHandleProps && (
+          <div
+            {...dragHandleProps}
+            className="cursor-grab active:cursor-grabbing p-1 rounded-md text-[var(--text-secondary)] hover:text-[#8296FF] hover:bg-[var(--inset-surface)] transition-all touch-none shrink-0 mt-0.5 opacity-40 hover:opacity-100 group-hover:opacity-100"
+            title="Drag to reorder task priority"
+            aria-label="Drag handle to reorder task priority"
+          >
+            <GripVertical className="w-4 h-4" />
+          </div>
+        )}
+
         {/* High-Contrast Utilitarian Checkbox */}
         <button
           onClick={handleMainToggle}

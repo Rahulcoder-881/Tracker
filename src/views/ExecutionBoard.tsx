@@ -11,13 +11,30 @@ import {
   ArrowRight,
   Bot,
   Send,
-  MessageSquare
+  MessageSquare,
+  ArrowDownUp
 } from 'lucide-react';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
 import { Task, ExecutionDay, AIInsight, DomainType, GrowthGoal, MediaAsset, Habit } from '../types';
 import { DateScroller } from '../components/DateScroller';
 import { ProgressMeter } from '../components/ProgressMeter';
 import { AiInsightBanner } from '../components/AiInsightBanner';
 import { TaskCard } from '../components/TaskCard';
+import { SortableTaskItem } from '../components/SortableTaskItem';
 import { HabitsTracker } from '../components/HabitsTracker';
 import { sound } from '../utils/audio';
 
@@ -47,6 +64,7 @@ interface ExecutionBoardProps {
   onToggleHabit?: (habitId: string, date: string) => void;
   onAddHabit?: (habit: Omit<Habit, 'id' | 'streak' | 'bestStreak' | 'completedDates' | 'createdAt'>) => void;
   onDeleteHabit?: (habitId: string) => void;
+  onReorderTasks?: (reorderedTasks: Task[]) => void;
 }
 
 export const ExecutionBoard: React.FC<ExecutionBoardProps> = ({
@@ -75,12 +93,25 @@ export const ExecutionBoard: React.FC<ExecutionBoardProps> = ({
   onToggleHabit,
   onAddHabit,
   onDeleteHabit,
+  onReorderTasks,
 }) => {
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'completed'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [aiPrompt, setAiPrompt] = useState('');
   const [isExtracting, setIsExtracting] = useState(false);
   const [extractedNotice, setExtractedNotice] = useState<string | null>(null);
+
+  // Configure pointer and keyboard sensors for smooth, tactile dragging
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 5, // 5px movement required so normal button clicks are never blocked
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   // Quick extract tasks via Gemini API
   const handleQuickExtract = async (customPrompt?: string) => {
@@ -193,6 +224,22 @@ export const ExecutionBoard: React.FC<ExecutionBoardProps> = ({
     }
     return true;
   });
+
+  // Handle drag-and-drop task reordering
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      const oldIndex = filteredTasks.findIndex((t) => t.id === active.id);
+      const newIndex = filteredTasks.findIndex((t) => t.id === over.id);
+      if (oldIndex !== -1 && newIndex !== -1) {
+        sound.playClick();
+        const reordered = arrayMove(filteredTasks, oldIndex, newIndex);
+        if (onReorderTasks) {
+          onReorderTasks(reordered);
+        }
+      }
+    }
+  };
 
   return (
     <div className="flex-1 flex flex-col xl:flex-row gap-6 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full">
@@ -414,22 +461,48 @@ export const ExecutionBoard: React.FC<ExecutionBoardProps> = ({
           </div>
         </div>
 
+        {/* Reordering helper cue */}
+        {filteredTasks.length > 1 && (
+          <div className="flex items-center justify-between text-[11px] text-[var(--text-secondary)] px-1">
+            <span className="flex items-center gap-1.5 font-medium text-[var(--text-secondary)]">
+              <ArrowDownUp className="w-3 h-3 text-[#8296FF]" />
+              <span>Drag handle <strong className="text-[var(--text-primary)] font-semibold">⠿</strong> to reorder priorities</span>
+            </span>
+            <span className="text-[10px] font-mono text-[var(--text-secondary)]/70">
+              {filteredTasks.length} checkpoints
+            </span>
+          </div>
+        )}
+
         {/* Task List Section */}
         <div className="space-y-3">
-          {filteredTasks.map((task) => (
-            <TaskCard
-              key={task.id}
-              task={task}
-              onToggleTask={onToggleTask}
-              onToggleSubtask={onToggleSubtask}
-              onStartFocus={onStartFocus}
-              onDeconstructWithAI={onDeconstructWithAI}
-              onDeleteTask={onDeleteTask}
-              onAddSubtask={onAddSubtask}
-              allMedia={allMedia}
-              onOpenAttachmentPicker={onOpenAttachmentPicker}
-            />
-          ))}
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext
+              items={filteredTasks.map((t) => t.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              <div className="space-y-3">
+                {filteredTasks.map((task) => (
+                  <SortableTaskItem
+                    key={task.id}
+                    task={task}
+                    onToggleTask={onToggleTask}
+                    onToggleSubtask={onToggleSubtask}
+                    onStartFocus={onStartFocus}
+                    onDeconstructWithAI={onDeconstructWithAI}
+                    onDeleteTask={onDeleteTask}
+                    onAddSubtask={onAddSubtask}
+                    allMedia={allMedia}
+                    onOpenAttachmentPicker={onOpenAttachmentPicker}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
 
           {filteredTasks.length === 0 && (
             <div className="p-8 rounded-2xl border border-dashed border-[var(--border-medium)] bg-[var(--card-surface)]/30 text-center space-y-3">

@@ -118,8 +118,8 @@ export const Header: React.FC<HeaderProps> = ({
             title="Download Android APK or Install App"
           >
             <Smartphone className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Android APK</span>
-            <span className="sm:hidden text-[11px]">APK</span>
+            <span className="hidden sm:inline">Install App</span>
+            <span className="sm:hidden text-[11px]">Install</span>
           </button>
         )}
 
