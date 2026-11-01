@@ -243,7 +243,7 @@ export default function App() {
       }
 
       try {
-        const idToken = await fbUser.getIdToken();
+        const idToken = await fbUser.getIdToken(true);
         const response = await fetch('/api/auth/sync-firebase', {
           method: 'POST',
           headers: {
