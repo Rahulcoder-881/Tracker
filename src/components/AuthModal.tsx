@@ -21,6 +21,7 @@ import {
   createUserWithEmailAndPassword,
   updateProfile,
   sendPasswordResetEmail,
+  sendEmailVerification,
   db, 
   doc, 
   setDoc 
@@ -147,12 +148,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         onAuthSuccess(data.token, data.user);
         onClose();
       } else if (mode === 'register') {
+        if (password.length < 8) throw new Error('Password must contain at least 8 characters.');
         if (!email.toLowerCase().endsWith('@gmail.com')) {
           throw new Error('Please use a valid Gmail address ending in @gmail.com.');
         }
         const credential = await createUserWithEmailAndPassword(auth, email.trim(), password);
         const fbUser = credential.user;
         await updateProfile(fbUser, { displayName: name });
+        await sendEmailVerification(fbUser);
         const appUser: User = {
           id: fbUser.uid,
           email: fbUser.email || email.trim(),
