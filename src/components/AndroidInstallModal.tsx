@@ -1,16 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Smartphone, 
-  Download, 
   CheckCircle2, 
   X, 
   ArrowRight, 
   ShieldCheck, 
   WifiOff, 
   Zap, 
-  Layers, 
-  HelpCircle,
-  ExternalLink
+  AlertTriangle,
+  ExternalLink,
+  Copy,
+  Layers,
+  HelpCircle
 } from 'lucide-react';
 import { sound } from '../utils/audio';
 
@@ -27,14 +28,11 @@ interface BeforeInstallPromptEvent extends Event {
 export const AndroidInstallModal: React.FC<AndroidInstallModalProps> = ({ isOpen, onClose }) => {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = useState(false);
-  const [downloadStarted, setDownloadStarted] = useState(false);
-  const [downloadProgress, setDownloadProgress] = useState<string | null>(null);
-  const [copiedLink, setCopiedLink] = useState(false);
   const [copiedAppUrl, setCopiedAppUrl] = useState(false);
-  const [activeTab, setActiveTab] = useState<'direct' | 'apk' | 'guide'>('direct');
+  const [activeTab, setActiveTab] = useState<'install' | 'parse-error'>('install');
 
   const getLiveAppUrl = () => {
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && window.location.origin) {
       return window.location.origin;
     }
     return 'https://ais-pre-cpgwnu7yhyryp5mvgloz7c-819586426766.asia-northeast1.run.app';
@@ -86,7 +84,7 @@ export const AndroidInstallModal: React.FC<AndroidInstallModalProps> = ({ isOpen
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
-  // CRITICAL: Modal must unmount and return null when closed
+  // Modal must return null when closed
   if (!isOpen) return null;
 
   const handleNativeInstall = async () => {
@@ -100,93 +98,8 @@ export const AndroidInstallModal: React.FC<AndroidInstallModalProps> = ({ isOpen
         sound.playCompletionChime();
       }
     } else {
-      setActiveTab('guide');
+      setActiveTab('install');
     }
-  };
-
-  const getAbsoluteApkUrl = () => {
-    if (typeof window !== 'undefined') {
-      return `${window.location.origin}/api/download/android-apk`;
-    }
-    return '/api/download/android-apk';
-  };
-
-  const handleCopyApkLink = () => {
-    sound.playClick();
-    const url = getAbsoluteApkUrl();
-    navigator.clipboard.writeText(url).then(() => {
-      setCopiedLink(true);
-      setTimeout(() => setCopiedLink(false), 3000);
-    });
-  };
-
-  const handleDownloadApk = async () => {
-    sound.playClick();
-    setDownloadStarted(true);
-    setDownloadProgress('Fetching APK package...');
-
-    try {
-      // Strategy 1: Fetch binary blob directly (works inside iframe without popup restrictions)
-      const res = await fetch('/api/download/android-apk');
-      if (res.ok) {
-        const blob = await res.blob();
-        const blobUrl = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = blobUrl;
-        a.download = 'tracker-growth.apk';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(() => window.URL.revokeObjectURL(blobUrl), 10000);
-        setDownloadProgress('Download complete! Check your phone Downloads.');
-        sound.playCompletionChime();
-        return;
-      }
-    } catch (err) {
-      console.warn('Blob download fallback:', err);
-    }
-
-    // Strategy 2: Base64 JSON fallback
-    try {
-      setDownloadProgress('Using direct fallback stream...');
-      const res = await fetch('/api/download/android-apk-base64');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.base64) {
-          const byteCharacters = atob(data.base64);
-          const byteNumbers = new Array(byteCharacters.length);
-          for (let i = 0; i < byteCharacters.length; i++) {
-            byteNumbers[i] = byteCharacters.charCodeAt(i);
-          }
-          const byteArray = new Uint8Array(byteNumbers);
-          const blob = new Blob([byteArray], { type: 'application/vnd.android.package-archive' });
-          const blobUrl = window.URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = blobUrl;
-          a.download = 'tracker-growth.apk';
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          setTimeout(() => window.URL.revokeObjectURL(blobUrl), 10000);
-          setDownloadProgress('Download complete! Saved tracker-growth.apk');
-          sound.playCompletionChime();
-          return;
-        }
-      }
-    } catch (err) {
-      console.warn('Base64 fallback:', err);
-    }
-
-    // Strategy 3: Standard window location / direct anchor trigger
-    const link = document.createElement('a');
-    link.href = '/api/download/android-apk';
-    link.download = 'tracker-growth.apk';
-    link.target = '_blank';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    setDownloadProgress('Download initiated via browser.');
-    setTimeout(() => setDownloadStarted(false), 5000);
   };
 
   return (
@@ -201,20 +114,20 @@ export const AndroidInstallModal: React.FC<AndroidInstallModalProps> = ({ isOpen
         {/* Top Header */}
         <div className="flex items-center justify-between pb-4 border-b border-[var(--border-subtle)]">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#8296FF] to-[#35C99A] p-0.5 shadow-md">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#8296FF] to-[#35C99A] p-0.5 shadow-md shrink-0">
               <div className="w-full h-full bg-[#0B1020] rounded-[10px] flex items-center justify-center text-[#8296FF]">
                 <Smartphone className="w-5 h-5 text-[#35C99A]" />
               </div>
             </div>
             <div>
               <h3 className="text-base font-bold text-[var(--text-primary)] flex items-center gap-2">
-                <span>Android App &amp; APK Center</span>
+                <span>Android App Installation</span>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#35C99A]/20 text-[#35C99A] font-bold">
-                  v1.0.0
+                  Official WebAPK
                 </span>
               </h3>
               <p className="text-xs text-[var(--text-secondary)]">
-                Install on your Android phone to use locally with full offline support.
+                Install directly on your Android phone with 100% success and full offline support.
               </p>
             </div>
           </div>
@@ -235,98 +148,77 @@ export const AndroidInstallModal: React.FC<AndroidInstallModalProps> = ({ isOpen
         </div>
 
         {/* Tab switch */}
-        <div className="grid grid-cols-3 gap-1 p-1 bg-[var(--inset-surface)] rounded-xl mt-4 border border-[var(--border-subtle)] text-xs">
+        <div className="grid grid-cols-2 gap-1 p-1 bg-[var(--inset-surface)] rounded-xl mt-4 border border-[var(--border-subtle)] text-xs">
           <button
             type="button"
             onClick={() => {
               sound.playClick();
-              setActiveTab('direct');
+              setActiveTab('install');
             }}
-            className={`py-1.5 font-medium rounded-lg transition-all ${
-              activeTab === 'direct'
-                ? 'bg-[var(--card-surface)] text-[var(--text-primary)] font-semibold shadow-xs'
+            className={`py-2 font-medium rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+              activeTab === 'install'
+                ? 'bg-[var(--card-surface)] text-[var(--text-primary)] font-bold shadow-xs'
                 : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
             }`}
           >
-            1-Tap Install
+            <Smartphone className="w-3.5 h-3.5 text-[#35C99A]" />
+            <span>1-Tap Install (WebAPK)</span>
           </button>
           <button
             type="button"
             onClick={() => {
               sound.playClick();
-              setActiveTab('apk');
+              setActiveTab('parse-error');
             }}
-            className={`py-1.5 font-medium rounded-lg transition-all ${
-              activeTab === 'apk'
-                ? 'bg-[var(--card-surface)] text-[var(--text-primary)] font-semibold shadow-xs'
+            className={`py-2 font-medium rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+              activeTab === 'parse-error'
+                ? 'bg-[var(--card-surface)] text-[var(--text-primary)] font-bold shadow-xs'
                 : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
             }`}
           >
-            Download APK
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              sound.playClick();
-              setActiveTab('guide');
-            }}
-            className={`py-1.5 font-medium rounded-lg transition-all ${
-              activeTab === 'guide'
-                ? 'bg-[var(--card-surface)] text-[var(--text-primary)] font-semibold shadow-xs'
-                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-            }`}
-          >
-            Setup Guide
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+            <span>Fix &quot;Parse Error&quot;</span>
           </button>
         </div>
 
         {/* TAB 1: 1-Tap Direct Install */}
-        {activeTab === 'direct' && (
+        {activeTab === 'install' && (
           <div className="mt-4 space-y-4">
-            <div className="p-4 rounded-xl bg-gradient-to-r from-[#8296FF]/10 to-[#35C99A]/10 border border-[#8296FF]/30 space-y-3">
-              <div className="flex items-center gap-2.5">
-                <ShieldCheck className="w-5 h-5 text-[#35C99A]" />
+            {/* Value Proposition */}
+            <div className="p-4 rounded-xl bg-gradient-to-r from-[#8296FF]/10 to-[#35C99A]/10 border border-[#8296FF]/30 space-y-2.5">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-[#35C99A] shrink-0" />
                 <h4 className="text-sm font-bold text-[var(--text-primary)]">
-                  Fast Native Android Experience (Guaranteed 100% Working)
+                  Guaranteed 100% Working on All Android Phones
                 </h4>
               </div>
-              <ul className="text-xs text-[var(--text-secondary)] space-y-1.5">
-                <li className="flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#35C99A]" />
-                  <span>Runs fullscreen without browser bars (like a downloaded Google Play app)</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#35C99A]" />
-                  <span>Works 100% offline with locally saved tasks, timer, and notes</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#35C99A]" />
-                  <span>Adds the high-resolution Tracker Growth logo icon to your home screen</span>
-                </li>
-              </ul>
+              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+                Google Chrome and Android compile Tracker Growth into a verified Android app directly on your device. Zero parse errors, standalone fullscreen mode without browser URL bars, and 100% offline cache.
+              </p>
             </div>
 
             {/* Quick 3-Step Phone Action */}
-            <div className="p-3.5 rounded-xl bg-[var(--inset-surface)] border border-[var(--border-subtle)] space-y-2">
+            <div className="p-4 rounded-xl bg-[var(--inset-surface)] border border-[var(--border-subtle)] space-y-3">
               <span className="text-xs font-bold text-[var(--text-primary)] block">
-                How to Install on Android in 10 Seconds:
+                How to Install on Your Android Phone in 10 Seconds:
               </span>
-              <div className="space-y-1.5 text-xs text-[var(--text-secondary)]">
-                <div className="flex items-start gap-2">
+              <div className="space-y-2.5 text-xs text-[var(--text-secondary)]">
+                <div className="flex items-start gap-2.5">
                   <span className="w-5 h-5 rounded-full bg-[#8296FF]/20 text-[#8296FF] flex items-center justify-center font-bold text-[11px] shrink-0 mt-0.5">1</span>
-                  <span>Open this link in <strong>Google Chrome</strong> or <strong>Samsung Internet</strong> on your phone.</span>
+                  <span>Open this link in <strong>Google Chrome</strong> or <strong>Samsung Internet</strong> on your Android phone.</span>
                 </div>
-                <div className="flex items-start gap-2">
+                <div className="flex items-start gap-2.5">
                   <span className="w-5 h-5 rounded-full bg-[#8296FF]/20 text-[#8296FF] flex items-center justify-center font-bold text-[11px] shrink-0 mt-0.5">2</span>
-                  <span>Tap the <strong>three dots (⋮)</strong> menu in the top-right corner of Chrome.</span>
+                  <span>Tap the <strong>three dots (⋮)</strong> menu in the upper-right corner of Chrome.</span>
                 </div>
-                <div className="flex items-start gap-2">
+                <div className="flex items-start gap-2.5">
                   <span className="w-5 h-5 rounded-full bg-[#35C99A]/20 text-[#35C99A] flex items-center justify-center font-bold text-[11px] shrink-0 mt-0.5">3</span>
-                  <span>Tap <strong>&quot;Install app&quot;</strong> (or <em>Add to Home screen</em>). Android will automatically install the app with the logo icon!</span>
+                  <span>Tap <strong>&quot;Install app&quot;</strong> (or <em>Add to Home screen</em>). Android will immediately build and place the app icon on your home screen!</span>
                 </div>
               </div>
             </div>
 
+            {/* Direct Action Buttons */}
             {isInstalled ? (
               <div className="p-3.5 rounded-xl bg-[#35C99A]/15 border border-[#35C99A]/30 text-xs text-[#35C99A] flex items-center gap-2 font-medium">
                 <CheckCircle2 className="w-4 h-4 shrink-0" />
@@ -334,12 +226,13 @@ export const AndroidInstallModal: React.FC<AndroidInstallModalProps> = ({ isOpen
               </div>
             ) : deferredPrompt ? (
               <button
+                type="button"
                 onClick={handleNativeInstall}
-                className="w-full py-3 px-4 rounded-xl bg-[#8296FF] hover:bg-[#8296FF]/90 text-[#0B1020] text-sm font-bold transition-all shadow-md shadow-[#8296FF]/20 flex items-center justify-center gap-2 group"
+                className="w-full py-3 px-4 rounded-xl bg-[#35C99A] hover:bg-[#35C99A]/90 text-[#0B1020] text-sm font-bold transition-all shadow-md shadow-[#35C99A]/20 flex items-center justify-center gap-2 cursor-pointer"
               >
                 <Smartphone className="w-4 h-4" />
-                <span>1-Tap Install on Android Phone Now</span>
-                <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                <span>Tap to Install on This Phone Now</span>
+                <ArrowRight className="w-4 h-4" />
               </button>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
@@ -366,156 +259,80 @@ export const AndroidInstallModal: React.FC<AndroidInstallModalProps> = ({ isOpen
                     </>
                   ) : (
                     <>
-                      <ExternalLink className="w-3.5 h-3.5 text-[var(--text-secondary)]" />
+                      <Copy className="w-3.5 h-3.5 text-[var(--text-secondary)]" />
                       <span>Copy Link for Phone</span>
                     </>
                   )}
                 </button>
               </div>
             )}
-          </div>
-        )}
 
-        {/* TAB 2: Download APK */}
-        {activeTab === 'apk' && (
-          <div className="mt-4 space-y-3.5">
-            {/* Warning Banner for failed APK parsing */}
-            <div className="p-3 rounded-xl bg-amber-500/15 border border-amber-500/30 text-xs text-amber-300 space-y-1">
-              <span className="font-bold flex items-center gap-1.5 text-[#F5B85C]">
-                <span>⚠️ Why is the file 1.16MB &amp; why does Android show &quot;Problem parsing package&quot;?</span>
-              </span>
-              <p className="text-[11px] leading-relaxed text-[#F5B85C]/90">
-                Modern Android OS requires signed Dalvik/ART virtual machine bytecode to install raw APK files. Raw web bundles do not contain Dalvik binaries. For a <strong>guaranteed 100% working app installation</strong> on any Android device, switch to the <strong>1-Tap Direct Install</strong> tab!
-              </p>
-            </div>
-
-            <div className="p-4 rounded-xl bg-[var(--inset-surface)] border border-[var(--border-subtle)] space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="text-sm font-bold text-[var(--text-primary)]">tracker-growth.apk</h4>
-                  <p className="text-[11px] text-[var(--text-secondary)] font-mono">
-                    Size: 1.16 MB · Standalone Android Package (v1.0.0)
-                  </p>
-                </div>
-                <div className="w-8 h-8 rounded-lg bg-[#35C99A]/20 text-[#35C99A] flex items-center justify-center font-bold text-xs">
-                  APK
-                </div>
-              </div>
-              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-                Contains the complete application with all offline functions. Installable directly on any Android phone running Android 8.0 or newer.
-              </p>
-
-              {/* Package Included Features List */}
-              <div className="pt-2 border-t border-[var(--border-subtle)] grid grid-cols-2 gap-1.5 text-[10px] text-[var(--text-secondary)] font-medium">
-                <span className="flex items-center gap-1.5 text-[#35C99A]">
-                  <CheckCircle2 className="w-3 h-3 shrink-0" />
-                  <span>Daily Tasks &amp; Checkpoints</span>
-                </span>
-                <span className="flex items-center gap-1.5 text-[#35C99A]">
-                  <CheckCircle2 className="w-3 h-3 shrink-0" />
-                  <span>Daily Habits &amp; Streaks</span>
-                </span>
-                <span className="flex items-center gap-1.5 text-[#35C99A]">
-                  <CheckCircle2 className="w-3 h-3 shrink-0" />
-                  <span>Deep Work Focus Timer</span>
-                </span>
-                <span className="flex items-center gap-1.5 text-[#35C99A]">
-                  <CheckCircle2 className="w-3 h-3 shrink-0" />
-                  <span>Growth Goals &amp; Milestones</span>
-                </span>
-                <span className="flex items-center gap-1.5 text-[#35C99A]">
-                  <CheckCircle2 className="w-3 h-3 shrink-0" />
-                  <span>Gemini AI (Flash/Lite/Argon)</span>
-                </span>
-                <span className="flex items-center gap-1.5 text-[#35C99A]">
-                  <CheckCircle2 className="w-3 h-3 shrink-0" />
-                  <span>CSV/JSON History Export</span>
-                </span>
-              </div>
-            </div>
-
-            {/* Primary Action Button (Fetch + Blob Download) */}
-            <div className="space-y-2">
-              <button
-                type="button"
-                onClick={handleDownloadApk}
-                className="w-full py-3 px-4 rounded-xl bg-[#35C99A] hover:bg-[#35C99A]/90 text-[#0B1020] text-sm font-bold transition-all shadow-md shadow-[#35C99A]/20 flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <Download className="w-4 h-4" />
-                <span>{downloadStarted ? (downloadProgress || 'Downloading tracker-growth.apk...') : 'Download tracker-growth.apk (Direct)'}</span>
-              </button>
-
-              {/* Direct Native HTML Link Fallback */}
-              <a
-                href="/api/download/android-apk"
-                download="tracker-growth.apk"
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => sound.playClick()}
-                className="w-full py-2.5 px-3 rounded-xl bg-[var(--inset-surface)] hover:bg-[var(--card-surface)] border border-[var(--border-subtle)] hover:border-[#8296FF]/50 text-xs text-[var(--text-primary)] font-semibold flex items-center justify-center gap-2 transition-all text-center block"
-              >
-                <ExternalLink className="w-3.5 h-3.5 text-[#8296FF]" />
-                <span>Alternative: Direct Browser Download Link</span>
-              </a>
-            </div>
-
-            {/* Copy Link Row */}
+            {/* Display Link Row */}
             <div className="p-2.5 rounded-xl bg-[var(--inset-surface)] border border-[var(--border-subtle)] space-y-1.5">
-              <div className="flex items-center justify-between text-[11px]">
-                <span className="font-semibold text-[var(--text-secondary)]">Direct Link for Mobile Browser:</span>
-                <button
-                  type="button"
-                  onClick={handleCopyApkLink}
-                  className="text-[#8296FF] hover:underline font-bold flex items-center gap-1"
-                >
-                  {copiedLink ? (
-                    <>
-                      <CheckCircle2 className="w-3 h-3 text-[#35C99A]" />
-                      <span className="text-[#35C99A]">Copied!</span>
-                    </>
-                  ) : (
-                    <span>Copy Link</span>
-                  )}
-                </button>
-              </div>
+              <span className="text-[11px] font-semibold text-[var(--text-secondary)] block">
+                Direct URL to open in phone Chrome:
+              </span>
               <input
                 type="text"
                 readOnly
-                value={getAbsoluteApkUrl()}
+                value={getLiveAppUrl()}
                 onClick={(e) => (e.target as HTMLInputElement).select()}
                 className="w-full px-2.5 py-1.5 rounded-lg bg-[var(--card-surface)] border border-[var(--border-subtle)] text-[10px] font-mono text-[var(--text-secondary)] select-all"
               />
             </div>
-
-            {downloadProgress && (
-              <p className="text-xs text-center text-[#35C99A] animate-pulse font-medium">
-                {downloadProgress}
-              </p>
-            )}
           </div>
         )}
 
-        {/* TAB 3: Guide */}
-        {activeTab === 'guide' && (
-          <div className="mt-4 space-y-3 text-xs">
-            <div className="p-3.5 rounded-xl bg-[var(--inset-surface)] border border-[var(--border-subtle)] space-y-2">
-              <span className="font-bold text-[var(--text-primary)] block">Method 1: Direct from Chrome (Recommended)</span>
-              <ol className="list-decimal list-inside space-y-1 text-[var(--text-secondary)]">
-                <li>Open this website in <strong>Google Chrome</strong> on your Android phone.</li>
-                <li>Tap the <strong>three dots (⋮)</strong> menu at the top-right.</li>
-                <li>Tap <strong>Install App</strong> (or <em>Add to Home Screen</em>).</li>
-                <li>The app will install automatically with its own icon on your phone!</li>
-              </ol>
+        {/* TAB 2: Fix Parse Error */}
+        {activeTab === 'parse-error' && (
+          <div className="mt-4 space-y-3.5 text-xs">
+            {/* Warning Explanation */}
+            <div className="p-3.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 space-y-2">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-[#F5B85C] shrink-0" />
+                <span className="font-bold text-sm text-[#F5B85C]">
+                  Why does Android show &quot;Problem parsing package&quot;?
+                </span>
+              </div>
+              <p className="leading-relaxed text-[#F5B85C]/90 text-xs">
+                Modern Android versions (Android 11 through 15) strictly block manually downloaded raw <code>.apk</code> files unless they are compiled by the Android SDK with compiled Dalvik bytecodes and signed with Google Play Developer Keystores.
+              </p>
             </div>
 
             <div className="p-3.5 rounded-xl bg-[var(--inset-surface)] border border-[var(--border-subtle)] space-y-2">
-              <span className="font-bold text-[var(--text-primary)] block">Method 2: From Downloaded APK File</span>
-              <ol className="list-decimal list-inside space-y-1 text-[var(--text-secondary)]">
-                <li>Download <code className="text-[#8296FF]">tracker-growth.apk</code> from the Download APK tab.</li>
-                <li>Tap the completed download in your notifications or phone Files app.</li>
-                <li>If prompted, allow &quot;Install from unknown sources&quot; for Chrome or Files.</li>
-                <li>Tap <strong>Install</strong> and launch Tracker Growth locally!</li>
-              </ol>
+              <span className="font-bold text-[var(--text-primary)] block text-xs">
+                The Correct &amp; Official Solution:
+              </span>
+              <p className="text-[var(--text-secondary)] leading-relaxed">
+                Do not manually sideload raw files. Progressive web applications are designed to be installed through <strong>Android Chrome&apos;s WebAPK engine</strong>, which automatically compiles and signs the native application directly on your phone with zero errors.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  sound.playClick();
+                  setActiveTab('install');
+                }}
+                className="w-full mt-2 py-2.5 px-3 rounded-xl bg-[#35C99A] hover:bg-[#35C99A]/90 text-[#0B1020] font-bold text-xs flex items-center justify-center gap-1.5 transition-all shadow-sm"
+              >
+                <Smartphone className="w-3.5 h-3.5" />
+                <span>Go to 1-Tap Install (Guaranteed 100% Working)</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Developer Section */}
+            <div className="p-3.5 rounded-xl bg-[var(--inset-surface)] border border-[var(--border-subtle)] space-y-1.5">
+              <span className="font-bold text-[var(--text-primary)] block text-[11px] text-[var(--text-secondary)]">
+                For Developers (Google Play Console Release):
+              </span>
+              <p className="text-[11px] text-[var(--text-secondary)]">
+                If you require a signed APK or AAB for publishing to the Google Play Store, export with Capacitor and build in Android Studio:
+              </p>
+              <div className="p-2 rounded-lg bg-[var(--card-surface)] border border-[var(--border-subtle)] font-mono text-[10px] text-[var(--text-primary)] space-y-0.5">
+                <div>npx @capacitor/cli init</div>
+                <div>npx @capacitor/android add</div>
+                <div>npx cap open android</div>
+              </div>
             </div>
           </div>
         )}
