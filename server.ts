@@ -361,7 +361,6 @@ app.post('/api/auth/register', rateLimiter(10, 60000), honeypotCheck, (req, res)
     const salt = crypto.randomBytes(16).toString('hex');
     const passwordHash = hashPassword(password, salt);
 
-    const isRoot = normalizedUsername === 'dharamveersharma8809' || normalizedEmail === 'dharamveersharma8809@gmail.com';
     const newUser: UserRecord = {
       id: `usr-${Date.now()}`,
       email: normalizedEmail,
@@ -908,7 +907,7 @@ app.put('/api/media/:id', (req, res) => {
 // GEMINI MULTI-TURN CHATBOT (Roles, Argon/Flash/Lite, Search Grounding)
 // -------------------------------------------------------------
 
-app.post('/api/ai/chat', async (req, res) => {
+app.post('/api/ai/chat', rateLimiter(20, 60000), async (req, res) => {
   try {
     const { messages, systemRole, model, searchGrounding } = req.body;
 
@@ -1085,7 +1084,7 @@ wss.on('connection', async (clientWs: WebSocket) => {
 });
 
 // Existing breakdown & insight routes
-app.post('/api/ai/breakdown', async (req, res) => {
+app.post('/api/ai/breakdown', rateLimiter(30, 60000), async (req, res) => {
   try {
     const { taskTitle, taskDomain, estimatedMinutes } = req.body;
     if (!taskTitle) return res.status(400).json({ error: 'Task title is required' });
@@ -1125,7 +1124,7 @@ app.post('/api/ai/breakdown', async (req, res) => {
   }
 });
 
-app.post('/api/ai/insights', async (req, res) => {
+app.post('/api/ai/insights', rateLimiter(30, 60000), async (req, res) => {
   try {
     const { streak, completedCount, totalCount, focusMinutes, domainStats } = req.body;
     if (aiClient) {
