@@ -883,7 +883,7 @@ app.put('/api/media/:id', (req, res) => {
   const asset = mediaAssets.get(req.params.id);
   if (!asset) return res.status(404).json({ error: 'Media asset not found' });
   if (asset.userId !== user.id && user.role !== 'admin') {
-    return res.status(403).json({ error: 'You cannot edit another user\\'s media asset' });
+    return res.status(403).json({ error: 'You cannot edit another user\'s media asset' });
   }
 
   const { name, originalName, category, tags, mimeType, sizeBytes, dataUrl, notes, width, height } = req.body || {};
