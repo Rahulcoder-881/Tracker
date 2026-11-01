@@ -7,8 +7,19 @@ import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GoogleGenAI, Modality, GenerateContentResponse } from '@google/genai';
+import { initializeApp as initializeAdminApp, getApps as getAdminApps } from 'firebase-admin/app';
+import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 
 dotenv.config();
+
+const adminApp = getAdminApps().find((app) => app.name === '[DEFAULT]') || initializeAdminApp();
+const firebaseAdminAuth = getAdminAuth(adminApp);
+const adminEmails = new Set(
+  (process.env.ADMIN_EMAILS || '')
+    .split(',')
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean),
+);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -222,27 +233,7 @@ function findUserByIdentifier(identifier: string): UserRecord | null {
   return null;
 }
 
-// Seed Root Admin User: dharamveersharma8809 with password Dharam@8809
-const adminSalt = crypto.randomBytes(16).toString('hex');
-const adminHash = hashPassword('Dharam@8809', adminSalt);
-const adminUser: UserRecord = {
-  id: 'usr-admin-dharamveer',
-  email: 'dharamveersharma8809@gmail.com',
-  username: 'dharamveersharma8809',
-  role: 'admin',
-  name: 'Dharamveer Sharma',
-  domainFocus: 'Engineering',
-  bio: 'Platform Root Administrator & Lead Systems Architect with unrestricted governance authority.',
-  avatarUrl: 'https://api.dicebear.com/7.x/identicon/svg?seed=Dharamveer',
-  targetDailyHours: 5.0,
-  salt: adminSalt,
-  passwordHash: adminHash,
-  status: 'active',
-  createdAt: new Date('2026-10-01').toISOString(),
-  lastLoginAt: new Date().toISOString(),
-};
-users.set(adminUser.email.toLowerCase(), adminUser);
-
+// Administrator access is granted only to verified Firebase identities listed in ADMIN_EMAILS.
 // Seed Media Assets
 const seedMedia = [
   {
@@ -350,7 +341,7 @@ app.post('/api/auth/register', rateLimiter(10, 60000), honeypotCheck, (req, res)
       id: `usr-${Date.now()}`,
       email: normalizedEmail,
       username: normalizedUsername,
-      role: isRoot ? 'admin' : 'user',
+      role: 'user',
       name: name.trim(),
       domainFocus: domainFocus || 'Engineering',
       bio: '',
@@ -493,7 +484,7 @@ function requireAdmin(req: express.Request, res: express.Response, next: express
   if (!user) {
     return res.status(401).json({ error: 'Administrative authentication required' });
   }
-  if (user.role !== 'admin' && user.username !== 'dharamveersharma8809' && user.email !== 'dharamveersharma8809@gmail.com') {
+  if (user.role !== 'admin') {
     return res.status(403).json({ error: 'Access denied: Root Administrator privileges required' });
   }
   (req as any).adminUser = user;
@@ -691,28 +682,36 @@ app.post('/api/admin/maintenance/clear-cache', requireAdmin, (req, res) => {
   res.json({ message: `Cache and ${beforeCount} active sessions successfully cleared.` });
 });
 
-app.post('/api/auth/sync-firebase', (req, res) => {
+app.post('/api/auth/sync-firebase', rateLimiter(20, 60000), async (req, res) => {
   try {
-    const { id, email, name, avatarUrl, domainFocus } = req.body;
-    if (!id || !email) {
-      return res.status(400).json({ error: 'Missing user credentials for Firebase sync' });
+    const authorization = req.headers.authorization || '';
+    if (!authorization.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Firebase sign-in is required' });
     }
-    const normalizedEmail = email.toLowerCase().trim();
+
+    // Verify the Firebase ID token cryptographically. Never trust uid/email/role from request JSON.
+    const decoded = await firebaseAdminAuth.verifyIdToken(authorization.slice(7), true);
+    if (!decoded.uid || !decoded.email) {
+      return res.status(401).json({ error: 'A valid Firebase email identity is required' });
+    }
+
+    const normalizedEmail = decoded.email.toLowerCase().trim();
+    const isConfiguredAdmin = decoded.email_verified === true && adminEmails.has(normalizedEmail);
+    const { name, avatarUrl, domainFocus } = req.body || {};
     let user = users.get(normalizedEmail);
+
     if (!user) {
       const generatedSalt = crypto.randomBytes(16).toString('hex');
       const generatedHash = hashPassword(generateSecureToken(), generatedSalt);
-      const generatedUsername = normalizedEmail.split('@')[0] || `user_${Date.now()}`;
-      const isRoot = generatedUsername === 'dharamveersharma8809' || normalizedEmail === 'dharamveersharma8809@gmail.com';
       user = {
-        id: id || `usr-${Date.now()}`,
+        id: decoded.uid,
         email: normalizedEmail,
-        username: generatedUsername,
-        role: isRoot ? 'admin' : 'user',
-        name: name || 'Google Architect',
+        username: normalizedEmail.split('@')[0].replace(/[^a-z0-9_-]/g, '') || `user_${Date.now()}`,
+        role: isConfiguredAdmin ? 'admin' : 'user',
+        name: String(decoded.name || name || 'Tracker User').slice(0, 100),
         domainFocus: domainFocus || 'Engineering',
-        bio: 'Authenticated via Firebase Google Sign-In with real-time cloud persistence.',
-        avatarUrl: avatarUrl || `https://api.dicebear.com/7.x/identicon/svg?seed=${id}`,
+        bio: '',
+        avatarUrl: String(decoded.picture || avatarUrl || '').slice(0, 2048),
         targetDailyHours: 4.5,
         salt: generatedSalt,
         passwordHash: generatedHash,
@@ -722,9 +721,12 @@ app.post('/api/auth/sync-firebase', (req, res) => {
       };
       users.set(normalizedEmail, user);
     } else {
+      // Always take the stable identity and privilege from the verified Firebase token/config.
+      user.id = decoded.uid;
+      user.role = isConfiguredAdmin ? 'admin' : 'user';
       user.lastLoginAt = new Date().toISOString();
-      if (name) user.name = name;
-      if (avatarUrl) user.avatarUrl = avatarUrl;
+      if (decoded.name || name) user.name = String(decoded.name || name).slice(0, 100);
+      if (decoded.picture || avatarUrl) user.avatarUrl = String(decoded.picture || avatarUrl).slice(0, 2048);
     }
 
     const token = generateSecureToken();
@@ -736,63 +738,18 @@ app.post('/api/auth/sync-firebase', (req, res) => {
     });
 
     res.json({ message: 'Firebase user session synced', token, user: sanitizeUser(user) });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to sync Firebase session' });
+  } catch (err: any) {
+    console.warn('Firebase token verification failed:', err?.message || err);
+    res.status(401).json({ error: 'Firebase authentication failed. Please sign in again.' });
   }
 });
 
-app.post('/api/auth/forgot-password', (req, res) => {
-  try {
-    const { identifier, email, username } = req.body;
-    const loginIdentifier = (identifier || email || username || '').trim();
-    if (!loginIdentifier) {
-      return res.status(400).json({ error: 'Gmail ID or username is required' });
-    }
-    const user = findUserByIdentifier(loginIdentifier);
-    if (!user) {
-      return res.json({ message: 'If an account exists with this Gmail ID or username, a recovery token has been issued.' });
-    }
-
-    const resetToken = generateSecureToken();
-    passwordResets.set(resetToken, {
-      email: user.email,
-      token: resetToken,
-      expiresAt: Date.now() + 60 * 60 * 1000,
-    });
-
-    res.json({
-      message: 'Password recovery token generated successfully.',
-      resetToken,
-      accountEmail: user.email,
-      simulatedNotice: `Recovery token generated for ${user.email} (${user.username}).`,
-    });
-  } catch (err) {
-    res.status(500).json({ error: 'Password reset request failed' });
-  }
+app.post('/api/auth/forgot-password', rateLimiter(5, 60000), (_req, res) => {
+  res.status(410).json({ error: 'Password recovery is handled securely by Firebase email reset. Please use the sign-in form.' });
 });
 
-app.post('/api/auth/reset-password', (req, res) => {
-  try {
-    const { resetToken, newPassword } = req.body;
-    if (!resetToken || !newPassword || newPassword.length < 8) {
-      return res.status(400).json({ error: 'Valid token and minimum 8-character password required' });
-    }
-    const record = passwordResets.get(resetToken);
-    if (!record || Date.now() > record.expiresAt) {
-      return res.status(400).json({ error: 'Invalid or expired password reset token' });
-    }
-    const user = users.get(record.email);
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
-    const newSalt = crypto.randomBytes(16).toString('hex');
-    user.salt = newSalt;
-    user.passwordHash = hashPassword(newPassword, newSalt);
-    passwordResets.delete(resetToken);
-
-    res.json({ message: 'Password has been successfully reset. Please log in with your new credentials.' });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to reset password' });
-  }
+app.post('/api/auth/reset-password', (_req, res) => {
+  res.status(410).json({ error: 'Password reset tokens are no longer issued by this server. Use the Firebase password-reset email.' });
 });
 
 app.get('/api/auth/me', (req, res) => {
@@ -855,7 +812,7 @@ app.get('/api/media', (req, res) => {
   res.json({ assets: items });
 });
 
-app.post('/api/media/upload', (req, res) => {
+app.post('/api/media/upload', (req, res, next) => { const user = getAuthUser(req); if (!user) return res.status(401).json({ error: 'Authentication required' }); (req as any).mediaUser = user; next(); }, (req, res) => {
   try {
     const { name, originalName, category, tags, mimeType, sizeBytes, dataUrl, notes, width, height } = req.body;
     if (!name || !dataUrl) return res.status(400).json({ error: 'Name and media data are required' });
@@ -873,6 +830,7 @@ app.post('/api/media/upload', (req, res) => {
       width: width ? Number(width) : undefined,
       height: height ? Number(height) : undefined,
       createdAt: new Date().toISOString(),
+      userId: (req as any).mediaUser.id,
     };
 
     mediaAssets.set(newAsset.id, newAsset);
@@ -883,8 +841,14 @@ app.post('/api/media/upload', (req, res) => {
 });
 
 app.delete('/api/media/:id', (req, res) => {
-  const { id } = req.params;
-  mediaAssets.delete(id);
+  const user = getAuthUser(req);
+  if (!user) return res.status(401).json({ error: 'Authentication required' });
+  const asset = mediaAssets.get(req.params.id);
+  if (!asset) return res.status(404).json({ error: 'Media asset not found' });
+  if (asset.userId !== user.id && user.role !== 'admin') {
+    return res.status(403).json({ error: 'You cannot delete another user\'s media asset' });
+  }
+  mediaAssets.delete(req.params.id);
   res.json({ message: 'Media asset deleted successfully' });
 });
 
