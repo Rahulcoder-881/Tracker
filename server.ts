@@ -318,7 +318,9 @@ function getAuthUser(req: express.Request): UserRecord | null {
     return null;
   }
   for (const user of users.values()) {
-    if (user.id === session.userId) return user;
+    if (user.id === session.userId) {
+      return user.status === 'active' ? user : null;
+    }
   }
   return null;
 }
@@ -450,51 +452,10 @@ app.get('/api/admin/users', requireAdmin, (_req, res) => {
   res.json({ users: userList });
 });
 
-app.post('/api/admin/users', requireAdmin, (req, res) => {
-  try {
-    const { email, username, password, name, role, domainFocus, targetDailyHours, bio } = req.body;
-    if (!email || !password || !name) {
-      return res.status(400).json({ error: 'Name, email, and password are required' });
-    }
-    const normalizedEmail = email.toLowerCase().trim();
-    const cleanUsername = (username || normalizedEmail.split('@')[0]).toLowerCase().replace(/[^a-z0-9_-]/g, '').trim();
-
-    for (const u of users.values()) {
-      if (u.email.toLowerCase() === normalizedEmail) {
-        return res.status(409).json({ error: 'An account with this email already exists' });
-      }
-      if (u.username.toLowerCase() === cleanUsername) {
-        return res.status(409).json({ error: 'An account with this username already exists' });
-      }
-    }
-
-    const salt = crypto.randomBytes(16).toString('hex');
-    const passwordHash = hashPassword(password, salt);
-
-    const newUser: UserRecord = {
-      id: `usr-${Date.now()}`,
-      email: normalizedEmail,
-      username: cleanUsername,
-      role: role === 'admin' ? 'admin' : 'user',
-      name: name.trim(),
-      domainFocus: domainFocus || 'Engineering',
-      bio: bio || '',
-      avatarUrl: `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(cleanUsername)}`,
-      targetDailyHours: Number(targetDailyHours) || 4.0,
-      salt,
-      passwordHash,
-      status: 'active',
-      createdAt: new Date().toISOString(),
-      lastLoginAt: new Date().toISOString(),
-    };
-
-    users.set(normalizedEmail, newUser);
-    logAuditEvent((req as any).adminUser.username, 'CREATE_USER', `User: ${newUser.username}`, `Created user account with role ${newUser.role}`, 'info');
-
-    res.status(201).json({ message: 'User created successfully', user: sanitizeUser(newUser) });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Failed to create user' });
-  }
+app.post('/api/admin/users', requireAdmin, (_req, res) => {
+  res.status(410).json({
+    error: 'Create accounts through Firebase Authentication. Admin privileges are granted through the Cloud Run ADMIN_EMAILS allowlist.',
+  });
 });
 
 app.put('/api/admin/users/:id', requireAdmin, (req, res) => {
@@ -514,8 +475,10 @@ app.put('/api/admin/users/:id', requireAdmin, (req, res) => {
   }
 
   if (name) targetUser.name = String(name).trim();
-  if (role && (role === 'admin' || role === 'user')) {
-    targetUser.role = role;
+  if (role && role !== targetUser.role) {
+    return res.status(400).json({
+      error: 'Administrator access is controlled only by the Cloud Run ADMIN_EMAILS allowlist.',
+    });
   }
   if (status && (status === 'active' || status === 'suspended')) {
     targetUser.status = status;
@@ -529,59 +492,12 @@ app.put('/api/admin/users/:id', requireAdmin, (req, res) => {
   res.json({ message: 'User updated successfully', user: sanitizeUser(targetUser) });
 });
 
-app.post('/api/admin/users/:id/reset-password', requireAdmin, (req, res) => {
-  const { id } = req.params;
-  const { newPassword } = req.body;
-  if (!newPassword || newPassword.length < 6) {
-    return res.status(400).json({ error: 'Minimum 6 character password required' });
-  }
-
-  let targetUser: UserRecord | null = null;
-  for (const u of users.values()) {
-    if (u.id === id) {
-      targetUser = u;
-      break;
-    }
-  }
-
-  if (!targetUser) {
-    return res.status(404).json({ error: 'User not found' });
-  }
-
-  const newSalt = crypto.randomBytes(16).toString('hex');
-  targetUser.salt = newSalt;
-  targetUser.passwordHash = hashPassword(newPassword, newSalt);
-
-  logAuditEvent((req as any).adminUser.username, 'ADMIN_PASSWORD_RESET', `User: ${targetUser.username}`, 'Direct root administrative password override.', 'warn');
-
-  res.json({ message: `Password for ${targetUser.username} successfully reset.` });
+app.post('/api/admin/users/:id/reset-password', requireAdmin, (_req, res) => {
+  res.status(410).json({ error: 'Password resets must be sent through Firebase Authentication. Use the Firebase password reset flow.' });
 });
 
-app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
-  const { id } = req.params;
-  let targetUser: UserRecord | null = null;
-  let emailKey: string | null = null;
-
-  for (const [key, u] of users.entries()) {
-    if (u.id === id) {
-      targetUser = u;
-      emailKey = key;
-      break;
-    }
-  }
-
-  if (!targetUser || !emailKey) {
-    return res.status(404).json({ error: 'User not found' });
-  }
-
-  if (targetUser.username === 'dharamveersharma8809' || targetUser.email === 'dharamveersharma8809@gmail.com') {
-    return res.status(400).json({ error: 'Root Administrator account cannot be deleted.' });
-  }
-
-  users.delete(emailKey);
-  logAuditEvent((req as any).adminUser.username, 'DELETE_USER', `User: ${targetUser.username}`, 'User account permanently purged from platform.', 'critical');
-
-  res.json({ message: `User ${targetUser.username} deleted successfully.` });
+app.delete('/api/admin/users/:id', requireAdmin, (_req, res) => {
+  res.status(410).json({ error: 'Account deletion must be performed in Firebase Authentication until the Admin SDK is configured.' });
 });
 
 app.get('/api/admin/system', requireAdmin, (_req, res) => {
@@ -658,6 +574,10 @@ app.post('/api/auth/sync-firebase', rateLimiter(20, 60000), async (req, res) => 
       user.lastLoginAt = new Date().toISOString();
       if (decoded.displayName || name) user.name = String(decoded.displayName || name).slice(0, 100);
       if (decoded.photoUrl || avatarUrl) user.avatarUrl = String(decoded.photoUrl || avatarUrl).slice(0, 2048);
+    }
+
+    if (user.status !== 'active') {
+      return res.status(403).json({ error: 'This account has been suspended. Contact the administrator.' });
     }
 
     const token = generateSecureToken();
