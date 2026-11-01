@@ -825,7 +825,11 @@ app.post('/api/auth/logout', (req, res) => {
 
 app.get('/api/media', (req, res) => {
   const { category, tag, search } = req.query;
-  let items = Array.from(mediaAssets.values());
+  const requester = getAuthUser(req);
+  // Seed assets remain public; uploaded assets are visible only to their owner or an administrator.
+  let items = Array.from(mediaAssets.values()).filter(
+    (asset) => !asset.userId || (requester && (asset.userId === requester.id || requester.role === 'admin')),
+  );
   if (category && category !== 'All') items = items.filter((m) => m.category === category);
   if (tag && typeof tag === 'string') items = items.filter((m) => m.tags.includes(tag.toLowerCase()));
   if (search && typeof search === 'string') {
