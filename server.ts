@@ -327,106 +327,13 @@ function getAuthUser(req: express.Request): UserRecord | null {
 // AUTHENTICATION ROUTES
 // -------------------------------------------------------------
 
-app.post('/api/auth/register', rateLimiter(10, 60000), honeypotCheck, (req, res) => {
-  try {
-    const { email, username, password, name, domainFocus } = req.body;
-    if (!email || !password || !name) {
-      return res.status(400).json({ error: 'Name, Gmail ID, and password are required' });
-    }
-    const normalizedEmail = email.toLowerCase().trim();
-    
-    // Strict Gmail ID requirement (PDF checklist & user prompt: verified user to login using gmail id)
-    const isGmail = /^[a-zA-Z0-9._%+-]+@gmail\.com$/i.test(normalizedEmail);
-    if (!isGmail) {
-      return res.status(400).json({ error: 'Please enter a valid Gmail address ending in @gmail.com' });
-    }
-
-    if (password.length < 8) {
-      return res.status(400).json({ error: 'Password must be at least 8 characters for security.' });
-    }
-
-    const rawUsername = (username || normalizedEmail.split('@')[0] || name.toLowerCase().replace(/\s+/g, '_')).toLowerCase().trim();
-    const normalizedUsername = rawUsername.replace(/[^a-z0-9_-]/g, '') || `user_${Date.now()}`;
-
-    // Verify email and username uniqueness
-    for (const u of users.values()) {
-      if (u.email.toLowerCase() === normalizedEmail) {
-        return res.status(409).json({ error: 'An account with this Gmail ID already exists. Please log in.' });
-      }
-      if (u.username.toLowerCase() === normalizedUsername) {
-        return res.status(409).json({ error: 'This username is already taken. Please choose another username.' });
-      }
-    }
-
-    const salt = crypto.randomBytes(16).toString('hex');
-    const passwordHash = hashPassword(password, salt);
-
-    const newUser: UserRecord = {
-      id: `usr-${Date.now()}`,
-      email: normalizedEmail,
-      username: normalizedUsername,
-      role: 'user',
-      name: name.trim(),
-      domainFocus: domainFocus || 'Engineering',
-      bio: '',
-      avatarUrl: `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(normalizedUsername)}`,
-      targetDailyHours: 4.0,
-      salt,
-      passwordHash,
-      status: 'active',
-      createdAt: new Date().toISOString(),
-      lastLoginAt: new Date().toISOString(),
-    };
-
-    users.set(normalizedEmail, newUser);
-
-    const token = generateSecureToken();
-    sessions.set(token, {
-      userId: newUser.id,
-      token,
-      createdAt: new Date().toISOString(),
-      expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
-    });
-
-    logAuditEvent(newUser.username, 'USER_REGISTER', 'Authentication', `New verified Gmail account registered: ${newUser.email}`, 'info');
-
-    res.status(201).json({ message: 'Account registered successfully', token, user: sanitizeUser(newUser) });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to register account' });
-  }
+// Legacy password endpoints are disabled. Firebase Auth is the sole sign-in authority.
+app.post('/api/auth/register', (_req, res) => {
+  res.status(410).json({ error: 'Use Firebase account registration from the application sign-in screen.' });
 });
 
-app.post('/api/auth/login', rateLimiter(15, 60000), honeypotCheck, (req, res) => {
-  try {
-    const { identifier, email, username, password } = req.body;
-    const loginIdentifier = (identifier || email || username || '').trim();
-    if (!loginIdentifier || !password) {
-      return res.status(400).json({ error: 'Gmail ID and password are required' });
-    }
-    const user = findUserByIdentifier(loginIdentifier);
-    if (!user || !verifyPassword(password, user.salt, user.passwordHash)) {
-      return res.status(401).json({ error: 'Invalid Gmail ID or password. Please check your credentials or create a verified account.' });
-    }
-
-    if (user.status === 'suspended') {
-      return res.status(403).json({ error: 'This account has been suspended by the administrator.' });
-    }
-
-    user.lastLoginAt = new Date().toISOString();
-    const token = generateSecureToken();
-    sessions.set(token, {
-      userId: user.id,
-      token,
-      createdAt: new Date().toISOString(),
-      expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
-    });
-
-    logAuditEvent(user.username, 'USER_LOGIN', 'Authentication Gateway', `Successful session token issued for ${user.role} role.`, 'info');
-
-    res.json({ message: 'Login successful', token, user: sanitizeUser(user) });
-  } catch (err) {
-    res.status(500).json({ error: 'Authentication failed' });
-  }
+app.post('/api/auth/login', (_req, res) => {
+  res.status(410).json({ error: 'Password sign-in is handled by Firebase Authentication.' });
 });
 
 // -------------------------------------------------------------
@@ -749,8 +656,8 @@ app.post('/api/auth/sync-firebase', rateLimiter(20, 60000), async (req, res) => 
       user.id = decoded.localId;
       user.role = isConfiguredAdmin ? 'admin' : 'user';
       user.lastLoginAt = new Date().toISOString();
-      if (decoded.name || name) user.name = String(decoded.name || name).slice(0, 100);
-      if (decoded.picture || avatarUrl) user.avatarUrl = String(decoded.picture || avatarUrl).slice(0, 2048);
+      if (decoded.displayName || name) user.name = String(decoded.displayName || name).slice(0, 100);
+      if (decoded.photoUrl || avatarUrl) user.avatarUrl = String(decoded.photoUrl || avatarUrl).slice(0, 2048);
     }
 
     const token = generateSecureToken();
