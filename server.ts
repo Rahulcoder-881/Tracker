@@ -7,13 +7,8 @@ import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GoogleGenAI, Modality, GenerateContentResponse } from '@google/genai';
-import { initializeApp as initializeAdminApp, getApps as getAdminApps } from 'firebase-admin/app';
-import { getAuth as getAdminAuth } from 'firebase-admin/auth';
-
 dotenv.config();
 
-const adminApp = getAdminApps().find((app) => app.name === '[DEFAULT]') || initializeAdminApp();
-const firebaseAdminAuth = getAdminAuth(adminApp);
 const adminEmails = new Set(
   (process.env.ADMIN_EMAILS || '')
     .split(',')
@@ -23,6 +18,33 @@ const adminEmails = new Set(
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const firebaseWebApiKey = (() => {
+  if (process.env.FIREBASE_WEB_API_KEY) return process.env.FIREBASE_WEB_API_KEY;
+  try {
+    const configPath = path.resolve(__dirname, 'firebase-applet-config.json');
+    return JSON.parse(fs.readFileSync(configPath, 'utf8')).apiKey as string;
+  } catch {
+    return '';
+  }
+})();
+
+async function verifyFirebaseIdToken(idToken: string): Promise<any> {
+  if (!firebaseWebApiKey) throw new Error('FIREBASE_WEB_API_KEY is not configured');
+  const response = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(firebaseWebApiKey)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken }),
+    },
+  );
+  if (!response.ok) throw new Error('Firebase rejected the ID token');
+  const payload = await response.json() as { users?: any[] };
+  const account = payload.users?.[0];
+  if (!account?.localId || !account?.email) throw new Error('Firebase token has no verified account identity');
+  return account;
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -690,13 +712,13 @@ app.post('/api/auth/sync-firebase', rateLimiter(20, 60000), async (req, res) => 
     }
 
     // Verify the Firebase ID token cryptographically. Never trust uid/email/role from request JSON.
-    const decoded = await firebaseAdminAuth.verifyIdToken(authorization.slice(7), true);
-    if (!decoded.uid || !decoded.email) {
+    const decoded = await verifyFirebaseIdToken(authorization.slice(7));
+    if (!decoded.localId || !decoded.email) {
       return res.status(401).json({ error: 'A valid Firebase email identity is required' });
     }
 
     const normalizedEmail = decoded.email.toLowerCase().trim();
-    const isConfiguredAdmin = decoded.email_verified === true && adminEmails.has(normalizedEmail);
+    const isConfiguredAdmin = decoded.emailVerified === true && adminEmails.has(normalizedEmail);
     const { name, avatarUrl, domainFocus } = req.body || {};
     let user = users.get(normalizedEmail);
 
@@ -704,14 +726,14 @@ app.post('/api/auth/sync-firebase', rateLimiter(20, 60000), async (req, res) => 
       const generatedSalt = crypto.randomBytes(16).toString('hex');
       const generatedHash = hashPassword(generateSecureToken(), generatedSalt);
       user = {
-        id: decoded.uid,
+        id: decoded.localId,
         email: normalizedEmail,
         username: normalizedEmail.split('@')[0].replace(/[^a-z0-9_-]/g, '') || `user_${Date.now()}`,
         role: isConfiguredAdmin ? 'admin' : 'user',
-        name: String(decoded.name || name || 'Tracker User').slice(0, 100),
+        name: String(decoded.displayName || name || 'Tracker User').slice(0, 100),
         domainFocus: domainFocus || 'Engineering',
         bio: '',
-        avatarUrl: String(decoded.picture || avatarUrl || '').slice(0, 2048),
+        avatarUrl: String(decoded.photoUrl || avatarUrl || '').slice(0, 2048),
         targetDailyHours: 4.5,
         salt: generatedSalt,
         passwordHash: generatedHash,
@@ -722,7 +744,7 @@ app.post('/api/auth/sync-firebase', rateLimiter(20, 60000), async (req, res) => 
       users.set(normalizedEmail, user);
     } else {
       // Always take the stable identity and privilege from the verified Firebase token/config.
-      user.id = decoded.uid;
+      user.id = decoded.localId;
       user.role = isConfiguredAdmin ? 'admin' : 'user';
       user.lastLoginAt = new Date().toISOString();
       if (decoded.name || name) user.name = String(decoded.name || name).slice(0, 100);
