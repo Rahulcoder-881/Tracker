@@ -183,6 +183,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       } else if (mode === 'forgot') {
         await sendPasswordResetEmail(auth, identifier.trim());
         setSuccessMsg('Password reset instructions have been sent to the registered email address, if an account exists.');
+      }
     } catch (err: any) {
       setError(err.message || 'An error occurred during authentication');
     } finally {
